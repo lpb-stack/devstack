@@ -29,8 +29,10 @@ has its own scope:
    (`dev` for own repos, `lpb-dev` for forks).
 2. Make focused changes. **Prefer minimal, targeted patches** over broad
    rewrites.
-3. For forks, keep work as a **single squashed commit** on `lpb` so the delta
-   vs upstream stays one clean patch.
+3. For forks, keep LocalPibox work as **clean commits on top of upstream
+   merges** (on the dev branch, `lpb-dev`) so the delta vs upstream always
+   extracts as one patch; the stable `lpb` branch receives clean merges at
+   release time.
 4. Open a PR. Describe what changed, why, and how you tested it.
 
 ### Policy notes

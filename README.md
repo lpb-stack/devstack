@@ -68,28 +68,21 @@ lpb --help       # full usage
 ## How It Works
 
 ```mermaid
-flowchart TB
-    subgraph Host
-        H1["~/projects/myproject/"]
+flowchart LR
+    subgraph Host["Host"]
+        direction TB
+        H1["your project dir"]
         H2["~/.lpb-stack/state/"]
         H3["~/.lpb-stack/agent-browser/"]
         H4["Lemonade (:13305)"]
     end
 
-    subgraph Image["Image: ghcr.io/lpb-stack/devstack"]
-        direction TB
-        I1["Ubuntu 26.04 + Node.js 24"]
-        I2["Pi monorepo (built, patched)"]
-        I3["VSCodium server (headless)"]
-        I4["Chrome (agent-browser automation)"]
-        I5["Extensions: lemonade, memory, subagents, mcp-adapter"]
-        I6["Config preset: settings, skills, agents"]
-    end
+    IMG["ghcr.io/lpb-stack/devstack\nUbuntu 26.04 + Node.js 24\nPi (forked, patched) + VSCodium + Chrome\nExtensions + config preset (settings, skills, agents)"]
 
-    H1 -->|bind mount| I1
-    H2 -->|bind mount| I2
-    H3 -->|bind mount| I3
-    H4 -->|host network| I4
+    H1 -->|bind mount| IMG
+    H2 -->|bind mount| IMG
+    H3 -->|bind mount| IMG
+    H4 -->|host network| IMG
 ```
 
 ### Where things live
@@ -165,24 +158,13 @@ level, theme), `/new` (new session).
 ## Update Flow
 
 ```mermaid
-flowchart LR
-    subgraph Source["GitHub"]
-        G["push to dev or main"]
-    end
-
-    subgraph Pipeline["CI/CD"]
-        CI["GitHub Actions"]
-    end
-
-    subgraph Registry["GHCR"]
-        GHCR["ghcr.io/lpb-stack/devstack"]
-    end
-
-    subgraph Runtime["Host"]
-        PULL["lpb --update\n(pull image)"]
-        RUN["lpb (launch)"]
-        EXT["pi update --extensions\n(at boot)"]
-    end
+flowchart TB
+    G["push to dev / main\n(PR to main: tests only; weekly cron + manual: always build)"]
+    CI["GitHub Actions\ntest always — build + tag only when VERSION changed"]
+    GHCR["ghcr.io/lpb-stack/devstack\n:v-…-cli/web · :dev/main/latest-… · :sha-…"]
+    PULL["lpb --update (pull image)"]
+    RUN["lpb (launch)"]
+    EXT["pi update --extensions (at boot)"]
 
     G --> CI --> GHCR --> PULL --> RUN --> EXT
 ```
