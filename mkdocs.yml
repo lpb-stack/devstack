@@ -67,6 +67,7 @@ nav:
   - "CLI & configuration":
     - lpb CLI: reference/lpb-cli.md
     - lpb-config: reference/lpb-config.md
+    - lpb-devstack: reference/lpb-devstack.md
     - Environment variables: reference/env-vars.md
     - Config repo: reference/config-repo.md
     - Forking & repointing: reference/forking.md
@@ -75,4 +76,5 @@ nav:
     - lpb-memory analysis: reference/lpb-memory-analysis.md
     - Fork improvements: reference/fork-improvements.md
     - Repo workflow skill: reference/repo-workflow-skill.md
+    - Docs workflow skill: reference/docs-workflow-skill.md
   - Contributing: contributing.md
