@@ -37,6 +37,26 @@ DOCS_READY_FILE = "DOCS_READY"
 DOCS_ONLY_FILES = frozenset({
     "mkdocs.yml", "scripts/generate.py", "DOCS.md", DOCS_READY_FILE,
 })
+# Paths on dev that are code/machinery, not site content — a change there
+# does not invalidate a docs flag (the site never builds them). Anything
+# else counts as content. support/docs/ is content even though support/
+# holds runtime tools.
+_NON_CONTENT_FILES = frozenset({
+    ".dockerignore", ".env.example", ".gitignore", "Dockerfile", "VERSION",
+    "lpb.conf.env", "lpb.stack.env", "lpb.stack.dev.env", "lpb.stack.main.env",
+})
+_NON_CONTENT_DIRS = ("scripts/", ".githooks/", ".github/")
+
+
+def _is_content(path: str) -> bool:
+    """True when a dev↔docs tree difference is site content (drift-worthy)."""
+    if path in DOCS_ONLY_FILES or path in _NON_CONTENT_FILES:
+        return False
+    if path.startswith(_NON_CONTENT_DIRS):
+        return False
+    if path.startswith("support/") and not path.startswith("support/docs/"):
+        return False
+    return True
 
 
 def _docs_preview_dir() -> Path:
@@ -53,17 +73,17 @@ def _stable_version(dev_version: str) -> str:
 
 
 def _docs_drift_files(path: Path) -> list[str]:
-    """Content files differing between origin/dev and origin/docs.
+    """Site-content files differing between origin/dev and origin/docs.
 
-    Machinery files (DOCS_ONLY_FILES) are expected to differ and are
-    filtered out; anything else means dev's doc content is not in docs.
+    Machinery (DOCS_ONLY_FILES) and code paths (_NON_CONTENT_*) never appear
+    in the site build, so they are not drift; anything else means dev's
+    doc content is not in docs.
     """
     out, _err, code = git(path, "diff", "--name-only",
                           "origin/dev", f"origin/{DOCS_BRANCH}")
     if code != 0:
         return []
-    return sorted(f for f in out.splitlines()
-                  if f and f not in DOCS_ONLY_FILES)
+    return sorted(f for f in out.splitlines() if f and _is_content(f))
 
 
 def _docs_verdict(flag: str | None, target: str, drift: list[str]) -> str:
@@ -242,6 +262,14 @@ def _repo_action(st: dict, rebase: bool) -> tuple[str, str | None]:
     return st["feasibility"], None  # ff | merge
 
 
+def _main_unique_is_version_only(path: Path, dev_b: str, main_b: str) -> bool:
+    """True when main's tree differs from dev only in VERSION (the expected
+    stable-branch strip after a promotion, until dev advances again)."""
+    out, _err, code = git(path, "diff", "--name-only",
+                          f"origin/{dev_b}", f"origin/{main_b}")
+    return code == 0 and all(f == "VERSION" for f in out.splitlines() if f)
+
+
 def _set_commit_author() -> None:
     """Force LocalPibox author identity for git commits made by this process."""
     os.environ["GIT_AUTHOR_NAME"] = "localpibox"
@@ -270,8 +298,13 @@ def cmd_release_status(cons: Console) -> int:
         elif feas == "aligned":
             mark, note = "✅", "aligned"
         elif feas == "ahead":
-            mark, note = "⚠️", f"{main_b} is AHEAD of dev — check its unique commits"
-            problems += 1
+            if label == "devstack" and _main_unique_is_version_only(path, dev_b, main_b):
+                mark, note = "✅", (f"{main_b} ahead only by the stable VERSION "
+                                    f"strip (expected after a release, until "
+                                    f"dev advances)")
+            else:
+                mark, note = "⚠️", f"{main_b} is AHEAD of dev — check its unique commits"
+                problems += 1
         elif feas == "ff":
             mark, note = "✅", f"{main_b} {st['main_behind_by']} behind → fast-forward"
         elif feas == "merge":

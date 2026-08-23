@@ -138,6 +138,16 @@ def test_docs_state_ready_then_stale(tmpdir):
     p1, p2 = _patch_release(clone, tmpdir)
     with p1, p2:
         assert rel._docs_release_state()["verdict"] == "ready"
+    # code-only changes on dev do NOT invalidate the flag (the site
+    # doesn't build them)
+    _g(clone, "checkout", "dev")
+    (clone / "scripts").mkdir(exist_ok=True)
+    (clone / "scripts" / "tool.py").write_text("x = 1\n")
+    _g(clone, "add", ".")
+    _g(clone, "commit", "-qm", "code")
+    _g(clone, "push", "-q", "origin", "dev")
+    with p1, p2:
+        assert rel._docs_release_state()["verdict"] == "ready"
     # doc content changes on dev after flagging → stale
     _g(clone, "checkout", "dev")
     (clone / "doc" / "x.md").write_text("content v2\n")
@@ -212,6 +222,22 @@ def test_release_state_real_conflict(tmpdir):
         st = rel._repo_release_state(clone, "dev", "main")
     assert "doc/a.md" in st["conflicts"]
     assert st["feasibility"] == "conflict"
+
+
+def test_main_unique_version_only(tmpdir):
+    """After a promotion, main is ahead of dev only by the VERSION strip —
+    status must not warn about it."""
+    clone = _fake_release_repo(tmpdir)
+    p1, p2 = _patch_release(clone, tmpdir)
+    with p1, p2:
+        # main (0.0.8-lpb) vs dev (0.0.9-lpb-dev): main's unique change is VERSION
+        assert rel._main_unique_is_version_only(clone, "dev", "main") is False
+        # simulate the post-release state: main == merge(dev) + VERSION strip
+        _g(clone, "checkout", "-q", "-B", "main", "origin/dev")
+        (clone / "VERSION").write_text("0.0.9-lpb\n")
+        _g(clone, "commit", "-qam", "strip")
+        _g(clone, "push", "-q", "--force", "origin", "main")
+        assert rel._main_unique_is_version_only(clone, "dev", "main") is True
 
 
 # ─── docs-ready command end-to-end ────────────────────────────────────────
