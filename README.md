@@ -77,12 +77,16 @@ flowchart LR
         H4["Lemonade (:13305)"]
     end
 
-    IMG["ghcr.io/lpb-stack/devstack\nUbuntu 26.04 + Node.js 24\nPi (forked, patched) + VSCodium + Chrome\nExtensions + config preset (settings, skills, agents)"]
+    subgraph Image["ghcr.io/lpb-stack/devstack<br/>(Ubuntu 26.04 + Node.js 24)"]
+        direction TB
+        RT["runtime: Pi (forked, patched) + VSCodium + Chrome"]
+        CF["extensions (lemonade, memory, subagents) + config preset"]
+    end
 
-    H1 -->|bind mount| IMG
-    H2 -->|bind mount| IMG
-    H3 -->|bind mount| IMG
-    H4 -->|host network| IMG
+    H1 -->|bind mount| RT
+    H2 -->|bind mount| CF
+    H3 -->|bind mount| RT
+    H4 -->|host network| RT
 ```
 
 ### Where things live
