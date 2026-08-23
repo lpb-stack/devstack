@@ -26,15 +26,17 @@ lpb                              # resumes your last project (or ~)
 ```
 
 On the **first run** the container pulls the image, clones the config preset,
-generates `settings.json`, and installs the extensions. Before Pi starts, the
-**first-run setup wizard** walks you through connecting your Lemonade server:
+generates `settings.json`, and installs the extensions. First-run setup then
+connects your Lemonade server:
 
-1. server URL (pre-filled from `LEMONADE_BASE_URL`, health-checked)
-2. API key (a placeholder like `lemonade` is fine for a local server)
-3. default model (picked from the server's model list)
-4. lpb-memory configuration
-
-After that Pi starts fully configured. Re-run it any time inside the
+- **`--ssh` / `--web`** (background): `lpb` prompts in its own terminal for
+  the server URL (health-checked — type the real host if
+  `127.0.0.1:13305` is unreachable) and API key, then the container finishes
+  setup non-interactively: default model (from the server's model list) and
+  lpb-memory configuration.
+- **Foreground Pi / shell**: the **first-run setup wizard** (`lpb-config
+  setup`) walks you through it inside the container, pre-filled from
+  `LPB_LEMONADE_BASE_URL` / `LPB_LEMONADE_API_KEY` env or `lpb.conf.env`. Re-run it any time inside the
 container with `lpb-config setup --reconfigure`.
 
 ### Common commands

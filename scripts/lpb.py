@@ -343,6 +343,10 @@ class Config:
     ssh_pubkey = ""
     ssh_password = ""
     ssh_port = os.environ.get("LPB_SSH_PORT", _conf_cfg.get("LPB_SSH_PORT", "2222"))
+    # Lemonade model server (prompted on first boot with a TTY, otherwise from
+    # env/lpb.conf.env) — passed to the container for the first-boot setup hook.
+    lemonade_base_url = ""
+    lemonade_api_key = ""
     pi_args = []  # args after "--" forwarded to pi inside container
 
 
@@ -1426,6 +1430,13 @@ def _build_run_env(mount_path: str) -> list[str]:
         f"LPB_EXA_API_KEY={os.environ.get('LPB_EXA_API_KEY', os.environ.get('EXA_API_KEY', ''))}",
         f"LPB_MAX_TOKENS_CONTEXT_RATIO={os.environ.get('LPB_MAX_TOKENS_CONTEXT_RATIO', _conf_cfg.get('LPB_MAX_TOKENS_CONTEXT_RATIO', '0.06'))}",
     ]
+    # Lemonade model server — resolved in cmd_run (step 6b): first-boot prompt
+    # on a TTY, otherwise static env/lpb.conf.env. start.sh bridges
+    # LPB_LEMONADE_* → LEMONADE_* for the plugin and the setup wizard.
+    if cfg.lemonade_base_url:
+        env_vars.append(f"LPB_LEMONADE_BASE_URL={cfg.lemonade_base_url}")
+    if cfg.lemonade_api_key:
+        env_vars.append(f"LPB_LEMONADE_API_KEY={cfg.lemonade_api_key}")
     # GHCR token for image pulls (personal account requires auth)
     ghcr_token = os.environ.get('GHCR_TOKEN') or os.environ.get('GITHUB_TOKEN') or os.environ.get('LPB_GITHUB_TOKEN', '')
     ghcr_username = os.environ.get('GHCR_USERNAME', _conf_cfg.get('GHCR_USERNAME', 'lpb-stack'))
@@ -1680,6 +1691,72 @@ def _run_cli(project_dir: str, env_vars: list[str], volumes: list[str]) -> None:
     # Container is removed (--rm), nothing to clean up
 
 
+def _bare_lemonade_url(raw: str) -> str:
+    """Normalize a lemonade URL to bare http://host:port (strip /v1, /api/v1…).
+
+    Mirrors lpb-config's _bare_base_url — the container normalizes again when
+    it reads LEMONADE_BASE_URL, so this exists only for the host-side probe.
+    """
+    url = (raw or "").strip()
+    if not url:
+        return ""
+    if not url.startswith(("http://", "https://")):
+        url = "http://" + url
+    return re.sub(r"/(api/)?v\d+/?$", "", url)
+
+
+def _url_reachable(url: str, timeout: float = 3.0) -> bool:
+    """Best-effort probe of a lemonade server (GET <bare>/api/v1/models)."""
+    bare = _bare_lemonade_url(url)
+    if not bare:
+        return False
+    try:
+        with urllib.request.urlopen(f"{bare}/api/v1/models", timeout=timeout):
+            return True
+    except Exception:
+        return False
+
+
+def _prompt_lemonade_first_boot(resolved_state: str) -> None:
+    """Resolve lemonade server URL + API key for container env passthrough.
+
+    Static resolution always applies: shell env LPB_LEMONADE_BASE_URL /
+    LEMONADE_BASE_URL, then lpb.conf.env. On a first boot (no .initialized
+    marker in the state dir) in a detached-server mode (--ssh / --web) with
+    a host TTY, the resolved URL (default http://127.0.0.1:13305 when unset)
+    is health-probed: unreachable → the user is offered the real host, and
+    the API key is asked with a default. The container's non-interactive
+    first-boot setup (start.sh → lpb-config setup) then consumes the passed
+    env vars. Foreground modes skip the host prompt — the in-container
+    interactive wizard handles it with these values pre-filled.
+    """
+    cfg.lemonade_base_url = (os.environ.get("LPB_LEMONADE_BASE_URL")
+                             or os.environ.get("LEMONADE_BASE_URL")
+                             or _conf_cfg.get("LPB_LEMONADE_BASE_URL", ""))
+    cfg.lemonade_api_key = (os.environ.get("LPB_LEMONADE_API_KEY")
+                            or os.environ.get("LEMONADE_API_KEY")
+                            or _conf_cfg.get("LPB_LEMONADE_API_KEY", ""))
+    detached_server = cfg.ssh_mode or cfg.web_mode
+    first_boot = not (Path(resolved_state) / ".pi" / ".initialized").exists()
+    if not (detached_server and first_boot and sys.stdin.isatty()):
+        return
+    default_url = "http://127.0.0.1:13305"
+    cfg.lemonade_base_url = _bare_lemonade_url(cfg.lemonade_base_url) or default_url
+    if not _url_reachable(cfg.lemonade_base_url):
+        while True:
+            warn(f"Lemonade server unreachable: {cfg.lemonade_base_url}")
+            val = input(f"  Server URL [Enter = keep {cfg.lemonade_base_url}]: ").strip()
+            if not val:
+                break
+            cfg.lemonade_base_url = _bare_lemonade_url(val)
+            if _url_reachable(cfg.lemonade_base_url):
+                break
+    done(f"Lemonade server: {cfg.lemonade_base_url}")
+    key_default = cfg.lemonade_api_key or "lemonade"
+    key = input(f"  API key [Enter = {key_default}]: ").strip()
+    cfg.lemonade_api_key = key or key_default
+
+
 def cmd_run():
     """Resolve the project, decide the mode (cli/web/shell/ssh), and launch the
     container. Foreground modes attach interactively; web/ssh run detached.
@@ -1708,6 +1785,9 @@ def cmd_run():
     dir_browser = resolve_path(cfg.browser_dir)
     os.makedirs(resolved_state, exist_ok=True)
     os.makedirs(dir_browser, exist_ok=True)
+
+    # ── 6b. Lemonade URL/key: first-boot prompt (TTY) or static passthrough ─
+    _prompt_lemonade_first_boot(resolved_state)
 
     # ── 7. Shell mode: attach to existing container (falls through to
     #    full startup when none exists; SSH mode skips this — it always

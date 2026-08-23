@@ -39,7 +39,7 @@ see [lpb-devstack reference](lpb-devstack.md).
 | Command | Description |
 |---|---|
 | `lpb-config setup` | Interactive first-run setup: lemonade provider (auth.json), default model (settings.json), lpb-memory config. Runs automatically on first boot (start.sh); idempotent — re-run with `--reconfigure` to change server/model |
-| `lpb-config setup --non-interactive` | Same, no prompts — `LEMONADE_BASE_URL` / `LEMONADE_API_KEY` env + defaults (used on TTY-less first boots) |
+| `lpb-config setup --non-interactive` | Same, no prompts — `LEMONADE_BASE_URL` / `LEMONADE_API_KEY` env + defaults. On TTY-less first boots the `lpb` launcher passes them in (first-boot prompt in `--ssh`/`--web` modes, see `lpb-cli.md`) |
 
 ### Pipeline Override
 

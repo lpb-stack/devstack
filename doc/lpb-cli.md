@@ -77,6 +77,29 @@ lpb /myproject -- --thinking high            # pass any pi flag
 - **`LPB_SSH_PORT`** (default `2222`): forwarded to the container; the
   connect line (`ssh -p <port> lpb@<host>`) is printed when the server starts.
 
+### First-boot Lemonade prompt (`--ssh` / `--web`)
+
+On the **first boot of a fresh state volume** (no `~/.pi/.initialized` in
+`LPB_STATE_DIR`), detached-server modes run the container's setup
+non-interactively — so `lpb` resolves your Lemonade server on the host side
+first:
+
+1. URL from `LPB_LEMONADE_BASE_URL` / `LEMONADE_BASE_URL` env or
+   `lpb.conf.env` (default `http://127.0.0.1:13305` when unset).
+2. Health probe (`GET <url>/api/v1/models`, 3 s). Unreachable on a TTY →
+   you're offered to type the real host (re-probed until it answers or you
+   press Enter to keep the current one); reachable → silent.
+3. API key is asked with the configured value (or `lemonade`) as default.
+
+The resolved URL + key are passed to the container
+(`LPB_LEMONADE_BASE_URL` / `LPB_LEMONADE_API_KEY`), where the first-boot
+hook (`lpb-config setup --non-interactive`) writes `auth.json` + default
+model. Foreground Pi/shell modes skip the host prompt — the in-container
+interactive wizard handles it, pre-filled from the same env. Non-TTY
+(hosts/CI) and already-initialized volumes: no prompt, static passthrough
+only. Reconfigure any time inside the container with
+`lpb-config setup --reconfigure`.
+
 ## Image Selection
 
 Two image flavours are published to `ghcr.io/lpb-stack/devstack`:

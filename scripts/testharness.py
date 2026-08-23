@@ -163,6 +163,7 @@ def reset_mock():
     MOCK_STATE["image_present"] = True
     MOCK_STATE["interactive"] = False
     MOCK_STATE["_stdout"] = ""
+    sys.stdin = _NonTTYStdin()
     global _curl_attempts
     _curl_attempts = 0
 
@@ -171,6 +172,18 @@ _module_counter = 0
 _subprocess_orig = None
 _shutil_orig = None
 _ISOLATED_HOME = tempfile.mkdtemp(prefix="lpb_test_home_")
+
+
+class _NonTTYStdin(io.StringIO):
+    """Deterministic non-interactive stdin for lpb.py tests.
+
+    Interactive prompts (SSH key selection, first-boot lemonade URL) gate on
+    sys.stdin.isatty(); defaulting to False keeps the suite from hanging when
+    run inside a terminal. Prompt tests swap in their own TTY fake.
+    """
+
+    def isatty(self) -> bool:
+        return False
 
 
 class _OutputCapture:
