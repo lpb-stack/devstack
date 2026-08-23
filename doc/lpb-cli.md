@@ -14,6 +14,8 @@ Installs (no sudo required) into `~/.local/bin`:
 
 - `lpb` — bash wrapper
 - `lpb.py` — Python engine
+- `lpb-config`, `lpb-devstack` + the shared `localpibox` package
+  (the setup wizard behind `lpb setup` / `lpb doctor`)
 
 …and copies the stack config files (`lpb.stack.env`, `lpb.conf.env`,
 `VERSION`) to `~/.lpb-stack/devstack/`. Make sure `~/.local/bin` is on your
@@ -31,13 +33,15 @@ Installs (no sudo required) into `~/.local/bin`:
 | `lpb --stop` | Stop the container |
 | `lpb --remove` | Stop + remove container + state dirs |
 | `lpb --logs` | Stream container logs |
-| `lpb --update` | Self-update the launcher + pull the latest image(s) |
-| `lpb --config` | Show config file location |
+| `lpb --update` | Self-update the launcher + stack tools + pull the latest image(s) |
+| `lpb setup` | Run the **initial setup wizard** (server, key, model, memory) — any time, all modes |
+| `lpb doctor` | Validate the installation (read-only checklist) |
+| `lpb --config` | Show config file location + model provider status |
 | `lpb --version` | Show installed launcher version |
 | `lpb --help` | Full usage |
 
 Positional aliases (no `--` needed): `lpb logs`, `lpb stop`, `lpb update`,
-`lpb remove`, `lpb config`, `lpb version`, `lpb help`.
+`lpb remove`, `lpb config`, `lpb setup`, `lpb doctor`, `lpb version`, `lpb help`.
 
 ### Pi passthrough
 
@@ -77,27 +81,42 @@ lpb /myproject -- --thinking high            # pass any pi flag
 - **`LPB_SSH_PORT`** (default `2222`): forwarded to the container; the
   connect line (`ssh -p <port> lpb@<host>`) is printed when the server starts.
 
-### First-boot Lemonade prompt (`--ssh` / `--web`)
+### Initial setup — one wizard for all modes
 
-On the **first boot of a fresh state volume** (no `~/.pi/.initialized` in
-`LPB_STATE_DIR`), detached-server modes run the container's setup
-non-interactively — so `lpb` resolves your Lemonade server on the host side
-first:
+Before the **first container start — in every mode (cli, shell, ssh, web)** —
+`lpb` validates the model-provider configuration. The provider state is
+checked live (stored credentials in `LPB_STATE_DIR/agent/auth.json` + a real
+HTTP probe of the Lemonade server), not a one-shot first-boot flag:
 
-1. URL from `LPB_LEMONADE_BASE_URL` / `LEMONADE_BASE_URL` env or
-   `lpb.conf.env` (default `http://127.0.0.1:13305` when unset).
-2. Health probe (`GET <url>/api/v1/models`, 3 s). Unreachable on a TTY →
-   you're offered to type the real host (re-probed until it answers or you
-   press Enter to keep the current one); reachable → silent.
-3. API key is asked with the configured value (or `lemonade`) as default.
+- **healthy** → silent; the stored URL/key are passed to the container.
+- **missing or broken + TTY** → the **setup wizard** runs (config repo →
+  server URL → API key → default model → lpb-memory config). Every step is
+  validated live (real HTTP probes) and failures loop back with the raw
+  error visible; `a` continues anyway (flagged), `q` aborts (nothing is
+  written, no container starts). The wizard writes `auth.json`,
+  `settings.json` and `lpb-memory-config.json` directly into the state dir,
+  so the configuration is **persisted before the first use**.
+- **missing or broken + non-TTY** (or `lpb --non-interactive`) → env
+  passthrough (`LPB_LEMONADE_BASE_URL` / `LPB_LEMONADE_API_KEY` / `lpb.conf.env`)
+  with a visible note; the container runs a non-interactive fallback.
 
-The resolved URL + key are passed to the container
-(`LPB_LEMONADE_BASE_URL` / `LPB_LEMONADE_API_KEY`), where the first-boot
-hook (`lpb-config setup --non-interactive`) writes `auth.json` + default
-model. Foreground Pi/shell modes skip the host prompt — the in-container
-interactive wizard handles it, pre-filled from the same env. Non-TTY
-(hosts/CI) and already-initialized volumes: no prompt, static passthrough
-only. Reconfigure any time inside the container with
+Because validation is live, a server that moves or a key that changes is
+detected on the next start and re-offers the wizard — configuration is never
+silently stale. The launch summary always ends with a model status line
+(✓ provider / ⚠ fix with `lpb setup`).
+
+On-demand commands (any mode, any time):
+
+- `lpb setup` — run the wizard interactively (the way to correct a bad
+  configuration; current values are pre-filled).
+- `lpb doctor` — read-only checklist: config repo, rendered config, provider
+  credentials, live server probe, container runtime, image.
+
+Inside the container the same wizard is available as `lpb-config setup`
+(and `lpb-config check` for the checklist); `start.sh` runs it
+non-interactively as a fallback on boots where the host wizard did not run,
+and a missing provider is reported in the container logs on **every boot**
+until fixed — not swallowed. Reconfigure any time with
 `lpb-config setup --reconfigure`.
 
 ## Image Selection

@@ -26,6 +26,25 @@ info()  { echo "[INFO]  $*"; }
 warn()  { echo "[WARN]  $*" >&2; }
 debug() { [[ "${DEBUG:-}" != "true" ]] || echo "[DEBUG] $*"; }
 
+# ─── Provider-credential check (shared by first-run + every-boot) ─────────
+# True when auth.json carries a usable lemonade entry (same candidate order
+# as the plugin's readStoredPayload). Used to decide whether the in-container
+# non-interactive setup fallback must run.
+_has_lemonade_creds() {
+    local agent_dir="${1:-${HOME_DIR}/.pi/agent}"
+    [[ -f "${agent_dir}/auth.json" ]] || return 1
+    AUTH_JSON="${agent_dir}/auth.json" python3 -c '
+import json, os, sys
+try:
+    d = json.load(open(os.environ["AUTH_JSON"]))
+except Exception:
+    sys.exit(1)
+e = d.get("lemonade") or (d.get("providers") or {}).get("lemonade") \
+    or (d.get("oauth") or {}).get("lemonade")
+sys.exit(0 if isinstance(e, dict) and e.get("refresh") else 1)
+'
+}
+
 # ─── 1. PARSE COMMAND-LINE ARGUMENTS ───────────────────────────────────────
 MODE=""
 EXTRA_ARGS=()
@@ -346,47 +365,34 @@ if [[ "$FIRST_RUN" = "true" ]]; then
     printf 'allow-scripts=better-sqlite3\nallow-scripts=agent-browser\nallow-scripts=esbuild\nallow-scripts=protobufjs\nallow-scripts=@google/genai\n' > "${AGENT_DIR}/git/.npmrc" 2>/dev/null || true
     printf 'allow-scripts=better-sqlite3\nallow-scripts=agent-browser\nallow-scripts=esbuild\nallow-scripts=protobufjs\nallow-scripts=@google/genai\n' > "${HOME_DIR}/.npmrc" 2>/dev/null || true
 
-    # ── Generate settings.json from template (first boot only) ───────
-    # Template is in the config repo; generated file is persisted on host volume.
-    # No model/provider — user will configure via /login after first boot.
-    _lpb_version="${LPB_VERSION:-0.0.0-lpb}"
-    _settings_template="${AGENT_DIR}/settings.json.template"
-    _settings_file="${AGENT_DIR}/settings.json"
-    if [[ -f "${_settings_template}" && ! -f "${_settings_file}" ]]; then
-        info "Generating settings.json from template..."
-        # Replace __LPB_VERSION__ placeholder with actual version
-        sed "s/__LPB_VERSION__/${_lpb_version}/g" "${_settings_template}" > "${_settings_file}"
-        info "  settings.json generated (version: ${_lpb_version})"
-        info "  No model configured — run '/login lemonade' to set your model"
-    elif [[ ! -f "${_settings_template}" ]]; then
-        warn "settings.json.template not found — Pi will use defaults"
-    fi
-
-    # ── First-run setup: lemonade provider + default model + memory ─────
-    # Interactive when a TTY is attached (cli / --shell); non-interactive
-    # otherwise (web mode, cron). Best-effort: a failure never blocks
-    # startup — re-run 'lpb-config setup [--reconfigure]' any time.
+    # ── Runtime config: render templates + provider setup ─────────────
+    # The HOST launcher runs the interactive setup wizard before the first
+    # start (lpb setup — all modes), writing directly into this agent dir.
+    # This in-container path is the FALLBACK for boots where the host
+    # wizard did not run (legacy hosts, manual starts, CI): render runtime
+    # config from templates, and — only when the provider is still
+    # unconfigured and a server URL is available — run the non-interactive
+    # wizard. A failure is reported prominently (not swallowed): re-run
+    # 'lpb setup' on the host, or 'lpb-config setup' in a shell.
     if command -v lpb-config >/dev/null 2>&1; then
-        if [[ -t 0 ]]; then
-            info "Running first-run setup (provider, model, memory)..."
-            lpb-config setup || warn "First-run setup failed — run 'lpb-config setup' in a terminal"
+        lpb-config render || warn "lpb-config render failed — Pi will use defaults"
+        if _has_lemonade_creds "${AGENT_DIR}"; then
+            debug "Lemonade provider already configured (host wizard or prior setup)"
+        elif [[ -n "${LEMONADE_BASE_URL:-}" ]]; then
+            info "Lemonade provider not configured — running non-interactive setup..."
+            if lpb-config setup --non-interactive; then
+                info "  Lemonade provider configured."
+            else
+                warn "────────────────────────────────────────────────────────" >&2
+                warn " Lemonade provider setup FAILED — model not configured" >&2
+                warn " Fix it with 'lpb setup' on the host, or open a shell" >&2
+                warn " (lpb --shell / ssh in) and run 'lpb-config setup'." >&2
+                warn "────────────────────────────────────────────────────────" >&2
+            fi
         else
-            lpb-config setup --non-interactive || \
-                info "Non-interactive setup incomplete (server unreachable?) — run 'lpb-config setup' in a terminal"
+            warn "No Lemonade provider configured (no LEMONADE_BASE_URL set)."
+            warn "Run 'lpb setup' on the host, or 'lpb-config setup' in a shell."
         fi
-    fi
-
-    # ── Generate lpb-memory config from template (first boot only) ──
-    # No llmModelOverride — uses main model until user configures provider.
-    _memory_template="${AGENT_DIR}/lpb-memory-config.json.template"
-    _memory_file="${AGENT_DIR}/lpb-memory-config.json"
-    if [[ -f "${_memory_template}" && ! -f "${_memory_file}" ]]; then
-        info "Generating lpb-memory-config.json from template..."
-        cp "${_memory_template}" "${_memory_file}"
-        info "  lpb-memory config generated (uses main model by default)"
-        info "  Run 'lpb-config memory setup' to configure after /login lemonade"
-    elif [[ ! -f "${_memory_template}" ]]; then
-        warn "lpb-memory-config.json.template not found — extension uses defaults"
     fi
 
     # ── GHCR login for image pulls ────────────────────────────────────
@@ -407,6 +413,14 @@ if [[ "$FIRST_RUN" = "true" ]]; then
     _unlock_account "$(stat -c %U "${HOME_DIR}" 2>/dev/null || echo "lpb")" "sudo -n" info
 
     info "First run bootstrap complete."
+fi
+
+# ─── 4a2. PERSISTENT PROVIDER REMINDER (EVERY BOOT) ─────────────────────────
+# The in-container logs are the only feedback channel in detached modes
+# (--ssh / --web), so a missing provider must be loud there, not a log
+# line nobody reads once. Every boot until the provider is configured.
+if ! _has_lemonade_creds "${AGENT_DIR}"; then
+    warn "Model provider NOT configured — run 'lpb setup' on the host (or 'lpb-config setup' here)."
 fi
 
 # ─── 4b. ENSURE HOME MOUNT PARENTS ARE WRITABLE (EVERY BOOT) ────────────────

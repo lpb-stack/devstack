@@ -12,6 +12,8 @@ Usage:
     lpb --stop                          Stop the container
     lpb --remove                        Stop + remove container + state dirs
     lpb --logs                          Stream container logs
+    lpb setup                           Run the initial setup wizard (any time)
+    lpb doctor                          Validate the installation (read-only check)
     lpb --tag dev|main|latest           Select image pipeline (dev/main/latest/<custom>)
     lpb --dev / lpb --main              Shorthand for --tag dev / --tag main
     lpb --update                        Pull latest image(s) (+ self-update launcher)
@@ -23,6 +25,8 @@ Positional command aliases (no -- needed):
     lpb update   → lpb --update
     lpb remove   → lpb --remove
     lpb config   → lpb --config
+    lpb setup    → lpb --setup
+    lpb doctor   → lpb --doctor
     lpb version  → lpb --version
     lpb help     → lpb --help
 
@@ -105,6 +109,26 @@ PROJECTS_DIR = CONFIG_DIR / "projects"
 LAST_PROJECT_FILE = CONFIG_DIR / "last-project"
 LAST_VERSION_FILE = CONFIG_DIR / "last-version"
 TOKEN_FILE = CONFIG_DIR / "token"
+
+# ─── Shared setup wizard (localpibox.setup) ──────────────────────────────
+# One wizard for every mode (cli/shell/ssh/web): configures + validates the
+# lemonade provider, default model, and lpb-memory config, writing directly
+# into the host state dir (the container's /home/lpb/.pi mount) so the
+# configuration is persisted BEFORE the first container start.
+# The import is guarded: an old install without the localpibox package can
+# still run the container (static env passthrough only).
+for _c in (Path(__file__).parent, Path(__file__).parent.parent,
+           Path("/opt/pi-support"), CONFIG_DIR):
+    if (_c / "localpibox").is_dir():
+        if str(_c) not in sys.path:
+            sys.path.insert(0, str(_c))
+        break
+try:
+    from localpibox import setup as lpb_setup          # noqa: E402
+    from localpibox.log import Console as LpbConsole   # noqa: E402
+except Exception:                                      # pragma: no cover
+    lpb_setup = None
+    LpbConsole = None
 
 # ─── Load stack configuration ────────────────────────────────────────────
 # lpb.stack.env defines build/image identity (fork URL, images, container)
@@ -343,10 +367,14 @@ class Config:
     ssh_pubkey = ""
     ssh_password = ""
     ssh_port = os.environ.get("LPB_SSH_PORT", _conf_cfg.get("LPB_SSH_PORT", "2222"))
-    # Lemonade model server (prompted on first boot with a TTY, otherwise from
-    # env/lpb.conf.env) — passed to the container for the first-boot setup hook.
+    # Lemonade model server — resolved by the unified setup preflight in
+    # cmd_run (all modes): interactive wizard before the first start, or
+    # static env/lpb.conf.env passthrough. Passed to the container as
+    # LPB_LEMONADE_* for the plugin and the in-container fallback setup.
     lemonade_base_url = ""
     lemonade_api_key = ""
+    non_interactive = False   # --non-interactive (no wizard, even on a TTY)
+    setup_result = None       # SetupResult from the preflight (for status display)
     pi_args = []  # args after "--" forwarded to pi inside container
 
 
@@ -405,12 +433,16 @@ def _fetch_file(url: str, dest: Path, staging: Path) -> None:
 # ── Self-update (lpb --update) ───────────────────────────────────────────────────
 
 def self_update() -> None:
-    """Update lpb (wrapper) + lpb.py (engine) from the GitHub repo.
+    """Update lpb (wrapper) + lpb.py (engine) + the shared tools from GitHub.
 
     Source branch follows the pipeline tag: --tag dev (or a versioned
     *-dev tag) pulls from the dev branch, everything else from main — so a
     launcher installed from main can be updated from dev (and vice versa)
     simply by choosing the tag. Network/IO failures never break startup.
+
+    Also refreshes lpb-config / lpb-devstack + the localpibox package under
+    CONFIG_DIR so the host-side setup wizard (lpb setup / lpb doctor) stays
+    in sync with the engine — mirroring scripts/install.sh.
     """
     engine_path = LPB_ENGINE_PATH
     if not engine_path.is_file():
@@ -427,6 +459,21 @@ def self_update() -> None:
         # Wrapper (optional — only present in install.sh installs)
         if wrapper_path.is_file():
             _fetch_file(base_url + "lpb", wrapper_path, staging)
+        # Stack tools + shared package (optional — install.sh installs)
+        for tool in ("lpb-config", "lpb-devstack"):
+            tool_path = base_dir / tool
+            if tool_path.is_file():
+                _fetch_file(base_url + tool, tool_path, staging)
+        localpibox_dirs = {
+            "localpibox": ["__init__.py", "cli.py", "env.py", "log.py", "run.py", "setup.py"],
+            "localpibox/stack": ["__init__.py", "gitutil.py", "repos.py", "version.py",
+                                 "workspace.py", "validate.py", "release.py"],
+        }
+        for rel, files in localpibox_dirs.items():
+            pkg_dir = CONFIG_DIR / rel
+            if pkg_dir.is_dir():
+                for f in files:
+                    _fetch_file(base_url + rel + "/" + f, pkg_dir / f, staging)
         # Keep the installed VERSION file in sync (best effort —
         # `lpb --version` reads it; only present in install.sh installs)
         version_dest = CONFIG_DIR / "VERSION"
@@ -808,6 +855,8 @@ HELP = (
     "  lpb --stop                       Stop the container\n"
     "  lpb --remove                     Stop + remove container + state dirs\n"
     "  lpb --logs                       Stream container logs\n"
+    "  lpb setup                        Initial setup wizard (all modes): server, key, model, memory\n"
+    "  lpb doctor                       Validate the installation (read-only)\n"
     "  lpb --update                     Pull latest image(s) (+ self-update launcher)\n"
     "  lpb --config                     Show config file location\n"
     "  lpb --help                       Show this help\n"
@@ -868,6 +917,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--remove", "-r", action="store_true")
     parser.add_argument("--logs", "-l", action="store_true")
     parser.add_argument("--update", "-u", action="store_true")
+    parser.add_argument("--setup", action="store_true",
+                        help="Run the initial setup wizard (server, key, model, memory)")
+    parser.add_argument("--doctor", action="store_true",
+                        help="Validate the installation (read-only checklist)")
+    parser.add_argument("--non-interactive", action="store_true",
+                        help="No prompts (env/defaults only; the wizard is skipped)")
     parser.add_argument("--config", "-c", action="store_true")
     parser.add_argument("--help", "-h", action="store_true")
     parser.add_argument("--", dest="_pi_args", nargs=argparse.REMAINDER)
@@ -883,7 +938,7 @@ def parse_cli(args: list[str]) -> None:
     # without requiring the -- prefix. Order matters: check commands before paths.
     POSITIONAL_COMMANDS = {"logs": "--logs", "stop": "--stop", "remove": "--remove",
                            "update": "--update", "config": "--config", "help": "--help",
-                           "version": "--version"}
+                           "version": "--version", "setup": "--setup", "doctor": "--doctor"}
     if args and args[0] in POSITIONAL_COMMANDS:
         args[0] = POSITIONAL_COMMANDS[args[0]]
 
@@ -944,6 +999,12 @@ def parse_cli(args: list[str]) -> None:
         cfg.command = "logs"
     if known.update:
         cfg.command = "update"
+    if known.setup:
+        cfg.command = "setup"
+    if known.doctor:
+        cfg.command = "doctor"
+    if known.non_interactive:
+        cfg.non_interactive = True
     if known.config:
         cfg.command = "config"
     if known.help:
@@ -1078,6 +1139,12 @@ def cmd_config():
     info(f"Config file: {CONFIG_FILE}")
     info(f"Projects:    {PROJECTS_DIR}")
     info(f"State dir:   {resolve_path(cfg.state_dir)}")
+    if lpb_setup is not None:
+        status, msg = lpb_setup.quick_status(_agent_dir_for(resolve_path(cfg.state_dir)))
+        info(f"Model:       {status} — {msg}")
+    info("")
+    info("Setup:       lpb setup   (wizard — all modes)")
+    info("Validate:    lpb doctor  (read-only check)")
 
 
 def cmd_version():
@@ -1430,9 +1497,10 @@ def _build_run_env(mount_path: str) -> list[str]:
         f"LPB_EXA_API_KEY={os.environ.get('LPB_EXA_API_KEY', os.environ.get('EXA_API_KEY', ''))}",
         f"LPB_MAX_TOKENS_CONTEXT_RATIO={os.environ.get('LPB_MAX_TOKENS_CONTEXT_RATIO', _conf_cfg.get('LPB_MAX_TOKENS_CONTEXT_RATIO', '0.06'))}",
     ]
-    # Lemonade model server — resolved in cmd_run (step 6b): first-boot prompt
-    # on a TTY, otherwise static env/lpb.conf.env. start.sh bridges
-    # LPB_LEMONADE_* → LEMONADE_* for the plugin and the setup wizard.
+    # Lemonade model server — resolved by the unified setup preflight in
+    # cmd_run (all modes): interactive wizard before a fresh start, or
+    # static env/lpb.conf.env passthrough. start.sh bridges
+    # LPB_LEMONADE_* → LEMONADE_* for the plugin and the fallback setup.
     if cfg.lemonade_base_url:
         env_vars.append(f"LPB_LEMONADE_BASE_URL={cfg.lemonade_base_url}")
     if cfg.lemonade_api_key:
@@ -1620,12 +1688,15 @@ def _run_web(c: ContainerClient, project_dir: str, env_vars: list[str],
         urls = _build_urls()
         for label, url in urls.items():
             info(f"\u2713 Devstack ready at {url}")
-        info("\n  lpb --logs     \u2014 View logs")
+        _print_setup_status()
+        info("")
+        info("  lpb --logs     \u2014 View logs")
         info("  lpb --stop     \u2014 Stop")
         info("  lpb --remove   \u2014 Remove everything")
         info("  lpb            \u2014 Reconnect to last project")
     else:
         info("\u26a0 Container running but editor may not be ready yet.")
+        _print_setup_status()
         info("  Check logs:       lpb --logs")
         info(f"  Container status: {cfg.container_cmd} ps --filter name={cfg.container_name}")
 
@@ -1661,6 +1732,7 @@ def _run_ssh(c: ContainerClient, project_dir: str, env_vars: list[str],
         info("  Auth:     key — your pubkey is in authorized_keys (private key never uploaded)")
     if cfg.ssh_password:
         info(f"  Password: {cfg.ssh_password}   \u2190 shown once; store it if you need it again")
+    _print_setup_status()
     info("")
     info("  Manage it with:")
     info("    lpb --stop      \u2014 Stop the SSH server")
@@ -1670,11 +1742,12 @@ def _run_ssh(c: ContainerClient, project_dir: str, env_vars: list[str],
 def _run_cli(project_dir: str, env_vars: list[str], volumes: list[str]) -> None:
     """CLI mode: run in the foreground with --rm (container is removed on
     exit, nothing to clean up afterwards)."""
-    info("Starting container (foreground)...\n")
     # Save last-project for reconnection
     _save_last_project(project_dir)
     # Save version from image name
     _save_version(cfg.image_name.split(":")[-1].replace("-cli", ""))
+    _print_setup_status()
+    info("\nStarting container (foreground)...")
     # Run foreground, then stop container after exit
     args = [cfg.container_cmd, "run", "--rm", "--network", "host"]
     if is_podman():
@@ -1691,70 +1764,193 @@ def _run_cli(project_dir: str, env_vars: list[str], volumes: list[str]) -> None:
     # Container is removed (--rm), nothing to clean up
 
 
-def _bare_lemonade_url(raw: str) -> str:
-    """Normalize a lemonade URL to bare http://host:port (strip /v1, /api/v1…).
+def _config_ref_for_pipeline() -> str:
+    """Config repo branch following the selected pipeline.
 
-    Mirrors lpb-config's _bare_base_url — the container normalizes again when
-    it reads LEMONADE_BASE_URL, so this exists only for the host-side probe.
+    dev tag (or a versioned *-dev tag) → dev branch, everything else → main.
+    The image IS the pipeline; the config repo tracks the matching branch.
     """
-    url = (raw or "").strip()
-    if not url:
-        return ""
-    if not url.startswith(("http://", "https://")):
-        url = "http://" + url
-    return re.sub(r"/(api/)?v\d+/?$", "", url)
+    tag = (cfg.image_tag or "").strip().lower()
+    return "dev" if tag == "dev" or tag.endswith("-dev") else "main"
 
 
-def _url_reachable(url: str, timeout: float = 3.0) -> bool:
-    """Best-effort probe of a lemonade server (GET <bare>/api/v1/models)."""
-    bare = _bare_lemonade_url(url)
-    if not bare:
-        return False
-    try:
-        with urllib.request.urlopen(f"{bare}/api/v1/models", timeout=timeout):
-            return True
-    except Exception:
-        return False
+def _setup_defaults() -> tuple[str, str]:
+    """(base_url, api_key) defaults for the wizard / env passthrough:
+    shell env (LPB_ then bare name), then lpb.conf.env."""
+    base = (os.environ.get("LPB_LEMONADE_BASE_URL")
+            or os.environ.get("LEMONADE_BASE_URL")
+            or _conf_cfg.get("LPB_LEMONADE_BASE_URL", ""))
+    key = (os.environ.get("LPB_LEMONADE_API_KEY")
+           or os.environ.get("LEMONADE_API_KEY")
+           or _conf_cfg.get("LPB_LEMONADE_API_KEY", ""))
+    return base, key
 
 
-def _prompt_lemonade_first_boot(resolved_state: str) -> None:
-    """Resolve lemonade server URL + API key for container env passthrough.
+def _agent_dir_for(resolved_state: str) -> Path:
+    """Host path of the agent dir: <state dir>/agent (== container /home/lpb/.pi/agent)."""
+    return Path(resolved_state) / "agent"
 
-    Static resolution always applies: shell env LPB_LEMONADE_BASE_URL /
-    LEMONADE_BASE_URL, then lpb.conf.env. On a first boot (no .initialized
-    marker in the state dir) in a detached-server mode (--ssh / --web) with
-    a host TTY, the resolved URL (default http://127.0.0.1:13305 when unset)
-    is health-probed: unreachable → the user is offered the real host, and
-    the API key is asked with a default. The container's non-interactive
-    first-boot setup (start.sh → lpb-config setup) then consumes the passed
-    env vars. Foreground modes skip the host prompt — the in-container
-    interactive wizard handles it with these values pre-filled.
-    """
-    cfg.lemonade_base_url = (os.environ.get("LPB_LEMONADE_BASE_URL")
-                             or os.environ.get("LEMONADE_BASE_URL")
-                             or _conf_cfg.get("LPB_LEMONADE_BASE_URL", ""))
-    cfg.lemonade_api_key = (os.environ.get("LPB_LEMONADE_API_KEY")
-                            or os.environ.get("LEMONADE_API_KEY")
-                            or _conf_cfg.get("LPB_LEMONADE_API_KEY", ""))
-    detached_server = cfg.ssh_mode or cfg.web_mode
-    first_boot = not (Path(resolved_state) / ".pi" / ".initialized").exists()
-    if not (detached_server and first_boot and sys.stdin.isatty()):
+
+def _print_setup_status() -> None:
+    """One-line model-provider status for the launch summary (all modes)."""
+    if lpb_setup is None:
         return
-    default_url = "http://127.0.0.1:13305"
-    cfg.lemonade_base_url = _bare_lemonade_url(cfg.lemonade_base_url) or default_url
-    if not _url_reachable(cfg.lemonade_base_url):
-        while True:
-            warn(f"Lemonade server unreachable: {cfg.lemonade_base_url}")
-            val = input(f"  Server URL [Enter = keep {cfg.lemonade_base_url}]: ").strip()
-            if not val:
-                break
-            cfg.lemonade_base_url = _bare_lemonade_url(val)
-            if _url_reachable(cfg.lemonade_base_url):
-                break
-    done(f"Lemonade server: {cfg.lemonade_base_url}")
-    key_default = cfg.lemonade_api_key or "lemonade"
-    key = input(f"  API key [Enter = {key_default}]: ").strip()
-    cfg.lemonade_api_key = key or key_default
+    try:
+        status, msg = lpb_setup.quick_status(_agent_dir_for(resolve_path(cfg.state_dir)))
+    except Exception as e:
+        warn(f"Model:      status check failed ({e})")
+        return
+    if status == "ok":
+        info(f"  Model:      {msg}")
+    elif status == "broken":
+        warn(f"  Model:      {msg}")
+    else:
+        warn(f"  Model:      {msg}")
+        warn("               run 'lpb setup' to configure the model provider")
+
+
+def _setup_preflight(resolved_state: str) -> None:
+    """Unified initial-setup gate — runs before EVERY fresh container start,
+    in EVERY mode (cli, shell, ssh, web).
+
+      provider healthy (stored creds + live probe) → silent passthrough
+      provider missing/broken + TTY → interactive wizard:
+          success        → pass the validated config to the container
+          'start anyway' → warn + pass through
+          abort          → abort the launch (no container started)
+      provider missing/broken + non-TTY (or --non-interactive) → env
+          passthrough (the container runs a non-interactive fallback)
+
+    Attaching to an already-running container never triggers the wizard —
+    those paths sys.exit() in _shell_attach_or_start/_check_existing_session
+    before this point.
+    """
+    base, key = _setup_defaults()
+    cfg.lemonade_base_url = base
+    cfg.lemonade_api_key = key
+    if lpb_setup is None:
+        warn("Setup wizard unavailable — skipping initial setup validation.")
+        warn("  Re-run install.sh or 'lpb --update' to restore it.")
+        return
+
+    agent = _agent_dir_for(resolved_state)
+    status, msg = lpb_setup.quick_status(agent)
+    if status == "ok":
+        # Keep the container env in sync with the persisted configuration.
+        creds = lpb_setup.lemonade_creds(agent)
+        if creds:
+            stored_base, stored_key = lpb_setup.decode_creds(creds)
+            cfg.lemonade_base_url = stored_base
+            cfg.lemonade_api_key = stored_key
+        return
+
+    # Provider missing or broken.
+    if cfg.non_interactive or not sys.stdin.isatty():
+        info(f"Model provider {status}: {msg}")
+        info("  Configuring non-interactively from env — run 'lpb setup' for the interactive wizard.")
+        return
+
+    result = lpb_setup.run_wizard(
+        agent_dir=agent,
+        cons=LpbConsole(),
+        interactive=True,
+        default_base_url=base,
+        default_api_key=key,
+        config_remote=(os.environ.get("LPB_CONFIG_REMOTE")
+                       or _stack_cfg.get("LPB_CONFIG_FORK", "")),
+        config_ref=_config_ref_for_pipeline(),
+    )
+    cfg.setup_result = result
+    if result.aborted:
+        info("Setup aborted — no container started. Re-run 'lpb' to try again.")
+        raise DevstackError
+    if result.ok and (result.base_url or result.api_key):
+        if result.base_url:
+            cfg.lemonade_base_url = result.base_url
+        if result.api_key:
+            cfg.lemonade_api_key = result.api_key
+    else:
+        warn("Setup did not complete validation — starting anyway.")
+        for w in result.warnings:
+            warn(f"  ⚠ {w}")
+
+
+def cmd_setup():
+    """Run the initial setup wizard on demand (host side, any mode).
+
+    Config repo + lemonade provider + default model + lpb-memory config,
+    all validated live before anything is written.
+    """
+    if lpb_setup is None:
+        err("setup wizard unavailable",
+            "Re-run install.sh or 'lpb --update' to restore the localpibox package.")
+        raise DevstackError
+    resolved_state = resolve_path(cfg.state_dir)
+    os.makedirs(resolved_state, exist_ok=True)
+    interactive = not cfg.non_interactive and sys.stdin.isatty()
+    result = lpb_setup.run_wizard(
+        agent_dir=_agent_dir_for(resolved_state),
+        cons=LpbConsole(),
+        interactive=interactive,
+        default_base_url=_setup_defaults()[0],
+        default_api_key=_setup_defaults()[1],
+        config_remote=(os.environ.get("LPB_CONFIG_REMOTE")
+                       or _stack_cfg.get("LPB_CONFIG_FORK", "")),
+        config_ref=_config_ref_for_pipeline(),
+    )
+    cfg.setup_result = result
+    if result.aborted:
+        info("Setup aborted — nothing was changed.")
+        sys.exit(1)
+    if result.ok:
+        done("Setup complete.")
+        for w in result.warnings:
+            warn(f"  ⚠ {w}")
+        info("Verify any time with: lpb doctor")
+        sys.exit(0)
+    err("Setup did not complete — nothing was persisted.")
+    if result.error:
+        hint = result.error
+    else:
+        hint = "Check the errors above and re-run 'lpb setup'."
+    err("", hint)
+    sys.exit(1)
+
+
+def cmd_doctor():
+    """Validate the installation (read-only): config repo, rendered config,
+    provider credentials, live server probe, container runtime, image."""
+    if lpb_setup is None:
+        err("setup wizard unavailable",
+            "Re-run install.sh or 'lpb --update' to restore the localpibox package.")
+        raise DevstackError
+    resolved_state = resolve_path(cfg.state_dir)
+    agent = _agent_dir_for(resolved_state)
+    cons = LpbConsole()
+    rc = lpb_setup.doctor(agent_dir=agent, cons=cons, final_line=False)
+
+    # Container-side checks (launcher-specific).
+    runtime = shutil.which("podman") or shutil.which("docker") or ""
+    if runtime:
+        ver = ContainerClient(runtime).version()
+        cons.info(f"  ✓ container runtime  {Path(runtime).name}{f' {ver}' if ver else ''}")
+        cfg.container_cmd = runtime
+        _resolve_image_and_mode()  # set cfg.image_name for the active mode
+        c = client()
+        if c.images_exists(cfg.image_name):
+            cons.info(f"  ✓ image            {cfg.image_name}")
+        else:
+            cons.warn(f"  ⚠ image            {cfg.image_name} not pulled yet (pulled on start)")
+    else:
+        cons.error("  ✗ container runtime  podman/docker not found — install one")
+        rc = 1
+    cons.info("=" * 54)
+    if rc == 0:
+        done("  Installation healthy.")
+    else:
+        err("  Installation has problems — see ✗ lines above.")
+    sys.exit(rc)
+
 
 
 def cmd_run():
@@ -1786,9 +1982,6 @@ def cmd_run():
     os.makedirs(resolved_state, exist_ok=True)
     os.makedirs(dir_browser, exist_ok=True)
 
-    # ── 6b. Lemonade URL/key: first-boot prompt (TTY) or static passthrough ─
-    _prompt_lemonade_first_boot(resolved_state)
-
     # ── 7. Shell mode: attach to existing container (falls through to
     #    full startup when none exists; SSH mode skips this — it always
     #    does a fresh detached server) ───────────────────────────────────
@@ -1797,6 +1990,13 @@ def cmd_run():
 
     # ── 8. Check for running Pi session ──────────────────────────────────
     _check_existing_session(c)
+
+    # ── 8b. Unified initial-setup gate — ALL modes, fresh starts only
+    #    (attach paths above have already exited). Interactive wizard on
+    #    a TTY when the provider is missing/broken; env passthrough
+    #    otherwise. Runs BEFORE the image pull so a broken setup never
+    #    pays for a pull first. ────────────────────────────────────────────
+    _setup_preflight(resolved_state)
 
     # ── 9. Pull image if needed ──────────────────────────────────────────
     _ensure_image(c)
@@ -1837,6 +2037,8 @@ def main() -> None:
         "remove": cmd_remove,
         "logs": cmd_logs,
         "update": cmd_update,
+        "setup": cmd_setup,
+        "doctor": cmd_doctor,
         "config": cmd_config,
         "run": cmd_run,
     }

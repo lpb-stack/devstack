@@ -49,7 +49,7 @@ for tool in lpb-config lpb-devstack; do
     chmod +x "${INSTALL_DIR}/${tool}"
 done
 mkdir -p "${CONFIG_DIR}/localpibox/stack"
-for f in __init__.py cli.py env.py log.py run.py; do
+for f in __init__.py cli.py env.py log.py run.py setup.py; do
     curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/main/scripts/localpibox/${f}" -o "${CONFIG_DIR}/localpibox/${f}"
 done
 for f in __init__.py gitutil.py repos.py version.py workspace.py validate.py release.py; do
@@ -109,6 +109,8 @@ echo "  lpb --logs                        — View container logs"
 echo "  lpb --remove                      — Remove everything"
 echo ""
 echo "Stack tools:"
+echo "  lpb setup          — Initial setup wizard (server, key, model, memory)"
+echo "  lpb doctor         — Validate the installation"
 echo "  lpb-config status | update | reset | memory setup   — config repo (container/host)"
 echo "  lpb-devstack bump | tag-repos | workspace | validate | release — DevOps"
 echo ""

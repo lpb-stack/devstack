@@ -44,8 +44,12 @@ The settings file is **template-driven**, not git-tracked:
 
 1. **Template**: `settings.json.template` ships in the config repo with
    `__LPB_VERSION__` placeholders
-2. **Boot**: `start.sh` generates `settings.json` by replacing placeholders
-3. **No model preconfigured**: user runs `/login lemonade` to set up the provider
+2. **Boot**: the setup wizard (`lpb setup` / `lpb-config setup`) renders
+   `settings.json` by replacing placeholders (fallback: `start.sh` via
+   `lpb-config render`)
+3. **Model configured interactively**: the setup wizard writes
+   `defaultProvider` + `defaultModel` with live validation (no `/login`
+   needed for lemonade)
 4. **Persistence**: `settings.json` lives on the host volume — it survives
    container rebuilds
 5. **Validation**: `lpb-devstack validate` checks settings.json pins match

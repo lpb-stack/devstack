@@ -7,7 +7,7 @@ The suite is split per concern, one file per area (all in scripts/):
   test_lpb_tags.py        — image tag selection + image resolution
   test_lpb_selfupdate.py  — lpb --update (launcher self-update)
   test_lpb_ssh.py         — SSH mode (key auto-detect, password auth)
-  test_lpb_lemonade.py    — first-boot lemonade URL/key prompt + env passthrough
+  test_lpb_lemonade.py    — unified setup preflight (all modes) + lpb setup/doctor
   test_lpb_regression.py  — structural guards, env files, cmd_* regression
                             tests, mutation tests
 

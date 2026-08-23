@@ -206,6 +206,11 @@ class _OutputCapture:
     def flush(self):
         pass
 
+    def isatty(self):
+        # Duck-typed stream: some helpers (localpibox.log.Console) probe
+        # isatty() to decide on color — a capture sink is never a TTY.
+        return False
+
     def __enter__(self):
         self._old = (sys.stdout, sys.stderr)
         sys.stdout, sys.stderr = self, self
