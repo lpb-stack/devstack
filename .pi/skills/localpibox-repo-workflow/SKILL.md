@@ -4,6 +4,13 @@ description: Manage the 6 LocalPibox repos — manual versioning (lpb-devstack b
 ---
 # LocalPibox Repository Workflow
 
+**Reference documentation, not a task list.** This skill is loaded as
+project context so you know how the stack works — loading it is NOT a
+request to ship anything. Only run `bump` / `release status` / `promote` /
+`docs-ready` commands when the user explicitly asks for a release. All
+version numbers in this file are illustrative placeholders (`0.0.N`); the
+actual current version always comes from `devstack/VERSION`.
+
 Versioning model: **single-source** (devstack/VERSION), **manual tagging**.
 The developer bumps the version with `lpb-devstack bump` (commit + push).
 CI builds and tags **only when VERSION changed in the pushed commit** —
@@ -29,7 +36,7 @@ Developer: lpb-devstack bump → commit → push (the release trigger)
 CI: VERSION changed in pushed commit → tests → build + publish → tag 5 repos
 ```
 
-- **devstack/VERSION** — the only VERSION file in the stack (e.g. `0.0.57-lpb-dev`)
+- **devstack/VERSION** — the only VERSION file in the stack (e.g. `0.0.N-lpb-dev`)
 - **Format:** dev pipeline `0.x.y-lpb-dev`, main pipeline `0.x.y-lpb`
 - **`lpb-devstack bump`** preserves major.minor, increments patch (or
   `--minor` / `--major` / `--set`), keeps the current suffix, and commits
@@ -145,7 +152,7 @@ What promote does per repo:
   guidance — delete the local branch (`git branch -D <stable>`, only with
   explicit user confirmation) and re-run
 - **devstack only:** strips the `-dev` VERSION suffix on `main` and commits
-  it (e.g. `0.0.58-lpb-dev` → `0.0.58-lpb`)
+  it (e.g. `0.0.N-lpb-dev` → `0.0.N-lpb`)
 
 After promote, CI (main pipeline) finishes the release — the VERSION change
 on `main` is the trigger:
@@ -176,7 +183,7 @@ Docs readiness verdicts (`release status`, checked by `promote`):
 ```bash
 # Work happens on dev as usual — CI runs tests on every push (no build).
 # When ready to ship:
-lpb-devstack bump                # 0.0.57-lpb-dev → 0.0.58-lpb-dev (+ commit)
+lpb-devstack bump                # current VERSION patch+1 (+ commit)
 git push origin dev              # CI sees VERSION change → build + tag
 # Or one step (commit + push):
 lpb-devstack bump --push
@@ -244,7 +251,8 @@ Both tools are thin CLIs over the shared `scripts/localpibox/stack/` library
 6. `lpb-devstack validate` checks pins match the current stack version
 7. Persistent on the host volume — survives container rebuilds
 
-Pins look like: `git:github.com/lpb-stack/pi-subagents@0.0.57-lpb-dev`
+Pins look like: `git:github.com/lpb-stack/pi-subagents@<VERSION>`
+(e.g. `...pi-subagents@0.0.N-lpb-dev`)
 
 ## lpb-memory Config Lifecycle
 
