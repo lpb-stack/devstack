@@ -10,7 +10,8 @@ Usage:
     lpb --ssh --ssh-password [pw]       SSH password login (no pw: random, shown once)
     lpb --web [/path/to/project]        Start VSCodium at project (background)
     lpb --stop                          Stop the container
-    lpb --remove                        Stop + remove container + state dirs
+    lpb --remove [sections...]          Remove parts: container, pi, gh, browser
+                                        (no sections: interactive menu, default = all)
     lpb --logs                          Stream container logs
     lpb setup                           Run the initial setup wizard (any time)
     lpb doctor                          Validate the installation (read-only check)
@@ -374,6 +375,8 @@ class Config:
     lemonade_base_url = ""
     lemonade_api_key = ""
     non_interactive = False   # --non-interactive (no wizard, even on a TTY)
+    yes = False               # --yes: skip the --remove confirmation (no sections = all)
+    remove_sections = []      # --remove: section names passed as positionals
     setup_result = None       # SetupResult from the preflight (for status display)
     pi_args = []  # args after "--" forwarded to pi inside container
 
@@ -859,7 +862,8 @@ HELP = (
     "  lpb --ssh --ssh-password [pw]    SSH password login (no pw: random, shown once)\n"
     "  lpb --web [/path/to/project]     Start VSCodium (background)\n"
     "  lpb --stop                       Stop the container\n"
-    "  lpb --remove                     Stop + remove container + state dirs\n"
+    "  lpb --remove [sections...]       Remove parts: container, pi, gh, browser\n"
+    "                                     (no sections: menu, default = all; --yes skips confirm)\n"
     "  lpb --logs                       Stream container logs\n"
     "  lpb setup                        Initial setup wizard (all modes): server, key, model, memory\n"
     "  lpb doctor                       Validate the installation (read-only)\n"
@@ -921,6 +925,8 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Pin to version tag (e.g. 0.0.9-lpb) or show stack version")
     parser.add_argument("--stop", "-s", action="store_true")
     parser.add_argument("--remove", "-r", action="store_true")
+    parser.add_argument("--yes", "-y", action="store_true",
+                        help="Skip confirmation prompts (with --remove; no sections = remove all)")
     parser.add_argument("--logs", "-l", action="store_true")
     parser.add_argument("--update", "-u", action="store_true")
     parser.add_argument("--setup", action="store_true",
@@ -1011,6 +1017,8 @@ def parse_cli(args: list[str]) -> None:
         cfg.command = "doctor"
     if known.non_interactive:
         cfg.non_interactive = True
+    if known.yes:
+        cfg.yes = True
     if known.config:
         cfg.command = "config"
     if known.help:
@@ -1077,10 +1085,16 @@ def parse_cli(args: list[str]) -> None:
 
     # -- passthrough: first non-flag arg after -- is project, rest go to pi
     cfg.pi_args.extend(after_dash)
-    if after_dash and not cfg.project_dir and after_dash[0] and not after_dash[0].startswith("-"):
+    if (after_dash and cfg.command != "remove"
+            and not cfg.project_dir and after_dash[0] and not after_dash[0].startswith("-")):
         # First is project dir, rest are pi args
         cfg.project_dir = after_dash[0]
         cfg.pi_args.extend(after_dash[1:])
+
+    # --remove: positionals are section names, not a project directory
+    if cfg.command == "remove" and positional:
+        cfg.remove_sections = positional
+        positional = []
 
     # First positional is the project directory
     if positional:
@@ -1104,25 +1118,213 @@ def cmd_stop():
     done(f"Stopped and removed {cfg.container_name}.")
 
 
-def cmd_remove():
-    """Remove the container plus persisted state/browser data (with confirmation)."""
-    ensure_container_cmd()
-    c = client()
-    c.containers_remove(cfg.container_name)
-    dir_browser = Path(resolve_path(cfg.browser_dir))
-    for d in (Path(resolve_path(cfg.state_dir)), dir_browser):
-        if d.is_dir():
-            print(f"\nWarning: this will permanently delete stored data:")
-            print(f"  {d}")
+# ─── lpb --remove: sections ────────────────────────────────────────────────
+# The state dir is the container's /home/lpb/.pi mount and holds pi config +
+# init (agent/, .initialized, ssh-host-keys/) side by side with GitHub auth
+# (gh-config/, separately bind-mounted to /home/lpb/.config/gh). Sections let
+# the user remove each part independently — a deselected section is simply
+# kept, never an abort of the whole operation.
+REMOVE_SECTIONS = ("container", "pi", "gh", "browser")
+
+
+def _human_size(n: float) -> str:
+    """Compact human-readable size (1536 → '1.5K')."""
+    for unit in ("B", "K", "M", "G", "T"):
+        if n < 1024 or unit == "T":
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+
+
+def _dir_size(path: Path) -> int:
+    """Recursive file-size total (OSError-tolerant; 0 for absent/non-dir)."""
+    total = 0
+    for root, _dirs, files in os.walk(path, onerror=lambda e: None):
+        for name in files:
             try:
-                choice = input("Continue? [y/N]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                choice = "n"
-            if choice != "y":
-                info("Aborted — nothing was removed.")
-                return
-            shutil.rmtree(d, ignore_errors=True)
-    done("Removed devstack (container, state dir, browser dir).")
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def _remove_section_paths() -> tuple[Path, dict[str, list[Path]]]:
+    """(state dir, {section: existing target paths}) for remove preview/exec.
+
+    'pi' = every entry in the state dir EXCEPT gh-config/ (that is 'gh'), so
+    new infra files that land in the state dir are covered automatically.
+    """
+    state = Path(resolve_path(cfg.state_dir))
+    browser = Path(resolve_path(cfg.browser_dir))
+    pi: list[Path] = []
+    if state.is_dir():
+        pi = [e for e in sorted(state.iterdir()) if e.name != "gh-config"]
+    gh: list[Path] = []
+    gh_dir = state / "gh-config"
+    if gh_dir.is_dir():
+        gh = [gh_dir]
+    br: list[Path] = [browser] if browser.is_dir() else []
+    return state, {"pi": pi, "gh": gh, "browser": br}
+
+
+def _container_status_quiet() -> str:
+    """One-word container state for the remove preview (never raises)."""
+    try:
+        if not cfg.container_cmd:
+            cfg.container_cmd = shutil.which("podman") or shutil.which("docker") or ""
+        if not cfg.container_cmd:
+            return "no runtime found"
+        return "running" if client().container_running(cfg.container_name) else "not running"
+    except Exception:  # pragma: no cover
+        return "status unknown"
+
+
+def _parse_section_tokens(tokens: list[str]) -> list[str] | None:
+    """Validate section tokens ('all'/'*' expand); None on any unknown token."""
+    out: list[str] = []
+    for tok in tokens:
+        if tok in ("all", "*"):
+            for s in REMOVE_SECTIONS:
+                if s not in out:
+                    out.append(s)
+        elif tok in REMOVE_SECTIONS:
+            if tok not in out:
+                out.append(tok)
+        else:
+            return None
+    return out
+
+
+def _select_remove_sections(paths: dict[str, list[Path]]) -> list[str] | None:
+    """Resolve the sections to remove, in priority order:
+      1. positionals (--remove pi / lpb remove pi)
+      2. --yes → all
+      3. TTY menu (default: all; 'q' aborts → None)
+    Non-interactive with no sections and no --yes → error (no silent partials).
+    """
+    if cfg.remove_sections:
+        selected = _parse_section_tokens(cfg.remove_sections)
+        if selected is None:
+            err(f"unknown remove section in {cfg.remove_sections!r}",
+                f"valid sections: {', '.join(REMOVE_SECTIONS)} (or 'all')")
+            raise DevstackError
+        return selected
+    if cfg.yes:
+        return list(REMOVE_SECTIONS)
+    if cfg.non_interactive or not sys.stdin.isatty():
+        err("non-interactive --remove needs explicit sections",
+            "lpb --remove <" + " | ".join(REMOVE_SECTIONS) + " | all>  (add --yes to skip the confirm)")
+        raise DevstackError
+    # Interactive menu — one selection prompt instead of a cascade of y/N.
+    print()
+    print("Removable sections:")
+    for s in REMOVE_SECTIONS:
+        if s == "container":
+            print(f"  {s:<9} container '{cfg.container_name}' ({_container_status_quiet()})")
+        elif paths[s]:
+            for i, p in enumerate(paths[s]):
+                label = s if i == 0 else " " * len(s)
+                print(f"  {label:<9} {p} ({_human_size(_dir_size(p))})")
+        else:
+            print(f"  {s:<9} (absent)")
+    print()
+    try:
+        choice = input("Sections to remove (default: all, 'q' aborts): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        info("Aborted — nothing was removed.")
+        return None
+    if choice in ("q", "quit", "abort"):
+        info("Aborted — nothing was removed.")
+        return None
+    tokens = choice.replace(",", " ").split()
+    if not tokens:
+        return list(REMOVE_SECTIONS)
+    selected = _parse_section_tokens(tokens)
+    if selected is None:
+        err(f"unknown section in '{choice}'",
+            f"valid sections: {', '.join(REMOVE_SECTIONS)} (or 'all')")
+        raise DevstackError
+    return selected
+
+
+def _execute_remove(requested: list[str], state: Path, paths: dict[str, list[Path]]) -> list[str]:
+    """Delete the selected sections; returns a list of failure messages."""
+    failures: list[str] = []
+    if "container" in requested:
+        ensure_container_cmd()
+        c = client()
+        if c.container_running(cfg.container_name):
+            c.containers_stop(cfg.container_name)
+        if not c.containers_remove(cfg.container_name):
+            failures.append(f"container '{cfg.container_name}' — remove failed (check '{cfg.container_cmd} ps')")
+    for s in ("pi", "gh", "browser"):
+        if s not in requested:
+            continue
+        for p in paths[s]:
+            try:
+                if p.is_symlink() or not p.is_dir():
+                    p.unlink()          # plain file (e.g. .initialized) or symlink
+                else:
+                    shutil.rmtree(p)    # directory (e.g. agent/)
+            except OSError as e:
+                failures.append(f"{s}: {p} — {e}")
+    # Both halves of the state dir removed → clean up the now-empty mount dir
+    # too (matches the old full-remove semantics: the state dir disappears).
+    if ("pi" in requested or "gh" in requested) and state.is_dir():
+        try:
+            if not any(state.iterdir()):
+                state.rmdir()
+        except OSError:  # pragma: no cover — non-empty means something survived
+            pass
+    return failures
+
+
+def cmd_remove():
+    """Remove devstack parts, section by section (container, pi, gh, browser).
+
+    bare --remove (TTY)      → interactive menu (default: all)
+    --remove <sections...>   → only those sections (pi / gh / browser / container / all)
+    --yes                    → skip the confirm (no sections = remove all)
+    One preview + one [Y/n] confirm. A 'no' at the confirm aborts everything;
+    a deselected section is simply kept.
+    """
+    state, paths = _remove_section_paths()
+    requested = _select_remove_sections(paths)
+    if requested is None:
+        return
+    kept = [s for s in REMOVE_SECTIONS if s not in requested]
+
+    print()
+    print("Will remove:")
+    for s in requested:
+        if s == "container":
+            print(f"  container  {cfg.container_name} ({_container_status_quiet()})")
+        elif paths[s]:
+            for p in paths[s]:
+                print(f"  {s:<10} {p} ({_human_size(_dir_size(p))})")
+        else:
+            print(f"  {s:<10} (absent — skipped)")
+    if kept:
+        print(f"Keeping: {', '.join(kept)}")
+    if not cfg.yes:
+        try:
+            answer = input("Confirm? [Y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer not in ("", "y", "yes"):
+            info("Aborted — nothing was removed.")
+            return
+
+    failures = _execute_remove(requested, state, paths)
+    if failures:
+        for f in failures:
+            warn(f)
+        err("some sections were not fully removed",
+            "check the messages above and re-run: lpb --remove <sections>")
+        raise DevstackError
+    msg = f"Removed: {', '.join(requested)}"
+    if kept:
+        msg += f"  (kept: {', '.join(kept)})"
+    done(msg)
 
 
 def cmd_logs():
@@ -2048,7 +2250,12 @@ def main() -> None:
         "config": cmd_config,
         "run": cmd_run,
     }
-    handlers.get(cfg.command, cmd_run)()
+    try:
+        handlers.get(cfg.command, cmd_run)()
+    except DevstackError:
+        # Handlers print their own Error:/hint lines before raising — a clean
+        # non-zero exit, not a traceback.
+        sys.exit(1)
 
 
 if __name__ == "__main__":
