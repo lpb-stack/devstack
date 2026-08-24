@@ -5,8 +5,9 @@ Usage:
     lpb [/path/to/project]              Start Pi CLI session at project (foreground)
     lpb /path -- <pi-args...>           Pass args through to pi (e.g. -p, --session)
     lpb --shell [/path/to/project]      Start interactive bash shell in container
-    lpb --ssh [pubkey|path] [/path]     Start sshd server (background) for remote login
-                                        (key auto-detected from ~/.ssh when omitted)
+    lpb --ssh [pubkey|path] [project]   Start sshd server (background) for remote login
+                                        (key auto-detected from ~/.ssh when omitted;
+                                         a project dir in place of a key is also accepted)
     lpb --ssh --ssh-password [pw]       SSH password login (no pw: random, shown once)
     lpb --web [/path/to/project]        Start VSCodium at project (background)
     lpb --stop                          Stop the container
@@ -408,6 +409,35 @@ def _discover_ssh_pubkeys(ssh_dir: Path | None = None) -> list[Path]:
     if not d.is_dir():
         return []
     return sorted(p for p in d.glob("*.pub") if p.is_file())
+
+
+_SSH_KEY_PREFIXES = ("ssh-rsa", "ssh-dss", "ssh-ed25519", "ecdsa-sha2-",
+                     "sk-ecdsa-", "sk-ssh-")
+
+
+def _looks_like_pubkey(value: str) -> bool:
+    """A public key is '<type> <base64> [comment]'; type starts with a known prefix."""
+    parts = value.split()
+    return len(parts) >= 2 and parts[0].startswith(_SSH_KEY_PREFIXES)
+
+
+def _classify_ssh_key_arg(value: str) -> tuple[str, object]:
+    """Classify the optional --ssh value:
+
+      ("key", str)      inline public key
+      ("file", Path)    existing file (to read as a public key)
+      ("project", str)  existing directory — a project path was passed
+      ("invalid", str)  none of the above
+    """
+    raw = value.strip()
+    p = Path(raw).expanduser()
+    if p.is_file():
+        return "file", p
+    if _looks_like_pubkey(raw):
+        return "key", raw
+    if p.is_dir():
+        return "project", str(p)
+    return "invalid", raw
 
 
 # ── Output helpers (stdout) ───────────────────────────────────────────────────
@@ -858,7 +888,7 @@ HELP = (
     "  lpb [/path/to/project]           Start Pi CLI session at project\n"
     "  lpb /path -- <pi-args...>        Pass flags through to pi (-p, --session, etc.)\n"
     "  lpb --shell [/path/to/project]   Interactive bash shell in container\n"
-    "  lpb --ssh [pubkey|path]          Start sshd server in background (key auto-detected from ~/.ssh)\n"
+    "  lpb --ssh [pubkey|path] [project] Start sshd server in background (key auto-detected from ~/.ssh)\n"
     "  lpb --ssh --ssh-password [pw]    SSH password login (no pw: random, shown once)\n"
     "  lpb --web [/path/to/project]     Start VSCodium (background)\n"
     "  lpb --stop                       Stop the container\n"
@@ -1030,9 +1060,31 @@ def parse_cli(args: list[str]) -> None:
     if known.ssh is not None or known.ssh_password is not None:
         cfg.ssh_mode = cfg.shell_mode = True
         if known.ssh:
-            p = Path(known.ssh)
-            cfg.ssh_pubkey = p.read_text(encoding="utf-8").strip() if p.is_file() else known.ssh.strip()
-        elif known.ssh_password is None:
+            kind, value = _classify_ssh_key_arg(known.ssh)
+            if kind == "file":
+                key_text = value.read_text(encoding="utf-8").strip()
+                if not _looks_like_pubkey(key_text):
+                    err(f"{value} does not contain a valid public key",
+                        "Pass a .pub file, an inline key (lpb --ssh <key>), or run 'lpb --ssh' to pick from ~/.ssh")
+                    raise DevstackError
+                cfg.ssh_pubkey = key_text
+            elif kind == "key":
+                cfg.ssh_pubkey = value
+            elif kind == "project":
+                # `lpb --ssh /path/to/project`: a directory where a key was
+                # expected — use it as the project dir and fall through to
+                # the profile-key discovery below (the selection prompt shows).
+                # An explicit positional project (parsed later) still wins.
+                if not cfg.project_dir:
+                    cfg.project_dir = value
+                    info(f"Project directory from --ssh argument: {value}")
+                known.ssh = ""
+            else:
+                err(f"'{known.ssh}' is not a valid pub key, a pub key file, or a project directory",
+                    "Key:     lpb --ssh <pubkey|path-to-pub-file> — or 'lpb --ssh' alone to pick from ~/.ssh\n"
+                    "Project: pass it as a positional: lpb --dev --ssh <key> <project>")
+                raise DevstackError
+        if not cfg.ssh_pubkey and known.ssh == "" and known.ssh_password is None:
             # No explicit key — fall back to the user's profile keys.
             keys = _discover_ssh_pubkeys()
             if not keys:
@@ -1942,16 +1994,19 @@ def _port_in_use(port) -> bool:
         s.close()
 
 
-def _wait_ssh_port(port, timeout: int = 20) -> bool:
+def _wait_ssh_port(port, timeout: int = 30) -> bool:
     """Wait until the sshd port accepts TCP connections.
 
     start.sh launches sshd asynchronously after the container starts, so
     connecting right after 'run' returns is too early. The SSH banner is
     verified — a bare connect cannot tell sshd apart from whatever else
     holds the host port, and claiming 'ready' for a non-sshd holder would
-    repeat the silent-failure bug."""
+    repeat the silent-failure bug. Prints a progress note every 30s so a
+    long first-run wait is not mistaken for a hang."""
     port = int(port)
-    deadline = time.time() + timeout
+    start = time.time()
+    deadline = start + timeout
+    next_note = 30
     while time.time() < deadline:
         try:
             s = socket.create_connection(("127.0.0.1", port), timeout=2)
@@ -1967,6 +2022,9 @@ def _wait_ssh_port(port, timeout: int = 20) -> bool:
             s.close()
         if banner.startswith(b"SSH-"):
             return True
+        if time.time() - start >= next_note:
+            info(f"  ... still waiting for sshd ({int(time.time() - start)}s elapsed)")
+            next_note += 30
         time.sleep(1)
     return False
 
@@ -2008,15 +2066,32 @@ def _run_ssh(c: ContainerClient, project_dir: str, env_vars: list[str],
     port = cfg.ssh_port
     user = "lpb"  # container user (uid 1000) is lpb
 
+    # First-run detection: the host state dir IS the container's /home/lpb/.pi
+    # mount, and start.sh creates <state>/.initialized when the bootstrap
+    # finishes. On the first boot the bootstrap (config-repo clone, volume
+    # chown, provider setup) runs BEFORE sshd starts and can take several
+    # minutes — a short wait here produced a false 'SSH server not ready'
+    # failure while the container was simply still bootstrapping.
+    first_run = not (Path(resolve_path(cfg.state_dir)) / ".initialized").exists()
+    if first_run:
+        info("First run — container is bootstrapping (config clone, provider setup)...")
+        info("  sshd starts automatically after the bootstrap; this can take a few minutes.")
+    wait_timeout = 300 if first_run else 30
+
     # Wait for sshd to actually listen before claiming success — the SSH
     # banner probe is the only ground truth (the host cannot see start.sh's
     # log in detached mode).
-    if not _wait_ssh_port(port):
+    if not _wait_ssh_port(port, wait_timeout):
         warn(f"Container started but SSH port {port} is NOT accepting the SSH protocol.")
         warn("  sshd failed to start inside the container — last container log lines:")
         _show_log_tail(c, 15)
-        err("SSH server not ready (container is still running)",
-            "Fix the cause above, then:  lpb --stop && lpb --ssh  (or --ssh-port <port>)")
+        if first_run:
+            err("SSH server not ready — the first-run bootstrap may still be running (container is still alive)",
+                "Watch it finish:  lpb --logs   (sshd starts once 'First run bootstrap complete' appears)\n"
+                "Start over:       lpb --stop && lpb --ssh  (or --ssh-port <port>)")
+        else:
+            err("SSH server not ready (container is still running)",
+                "Fix the cause above, then:  lpb --stop && lpb --ssh  (or --ssh-port <port>)")
         raise DevstackError
 
     done(f"\u2713 SSH server ready (background) — listening on port {port}")

@@ -54,6 +54,68 @@ def test_ssh_explicit_key_path():
     print("  PASS\n")
 
 
+def test_ssh_explicit_key_tilde_path():
+    print("TEST: --ssh ~/.ssh/<pub> → tilde expanded, file read")
+    reset_mock()
+    _clear_ssh()
+    mod = make_module()
+    _write_key("id_ed25519.pub")
+    mod.parse_cli(["--ssh", "~/.ssh/id_ed25519.pub"])
+    mod.apply_overrides()
+    assert mod.cfg.ssh_pubkey == "ssh-ed25519 AAAAC3-id_ed25519.pub id_ed25519.pub@host"
+    assert "~" not in mod.cfg.ssh_pubkey
+    print("  PASS\n")
+
+
+def test_ssh_project_dir_as_value():
+    print("TEST: --ssh <project dir> → project dir + profile key selection")
+    reset_mock()
+    _clear_ssh()
+    mod = make_module()
+    _write_key("id_ed25519.pub")
+    proj = os.path.join(os.environ["HOME"], "myproject")
+    os.makedirs(proj, exist_ok=True)
+    mod.parse_cli(["--ssh", proj])
+    mod.apply_overrides()
+    assert mod.cfg.ssh_mode
+    assert mod.cfg.project_dir == proj, "dir passed to --ssh must become the project dir"
+    # non-TTY + single profile key → auto-used (the prompt shows on a TTY)
+    assert mod.cfg.ssh_pubkey == "ssh-ed25519 AAAAC3-id_ed25519.pub id_ed25519.pub@host"
+    shutil.rmtree(proj, ignore_errors=True)
+    print("  PASS\n")
+
+
+def test_ssh_invalid_value_errors():
+    print("TEST: --ssh <nonexistent path> → error (not silently a key)")
+    reset_mock()
+    _clear_ssh()
+    mod = make_module()
+    try:
+        mod.parse_cli(["--ssh", os.path.join(os.environ["HOME"], "nowhere", "missing.pub")])
+        raise AssertionError("expected DevstackError")
+    except mod.DevstackError:
+        pass
+    print("  PASS\n")
+
+
+def test_ssh_file_without_key_content_errors():
+    print("TEST: --ssh <file that is not a pub key> → error")
+    reset_mock()
+    _clear_ssh()
+    mod = make_module()
+    bad = os.path.join(os.environ["HOME"], "not-a-key.pub")
+    with open(bad, "w") as f:
+        f.write("just some text\n")
+    try:
+        mod.parse_cli(["--ssh", bad])
+        raise AssertionError("expected DevstackError")
+    except mod.DevstackError:
+        pass
+    finally:
+        os.unlink(bad)
+    print("  PASS\n")
+
+
 def test_ssh_no_key_no_profile_keys():
     print("TEST: --ssh with no key and empty ~/.ssh → error")
     reset_mock()
@@ -239,9 +301,99 @@ def test_ssh_ready_only_after_port_opens():
     print("  PASS\n")
 
 
+def _first_run_marker():
+    """Host-side first-run marker: <state dir>/.initialized (start.sh creates it
+    when the in-container bootstrap finishes)."""
+    return os.path.join(os.environ["HOME"], ".lpb-stack", "state", ".initialized")
+
+
+def _run_ssh_flow_timeout(wait_ok: bool, first_run: bool) -> int:
+    """Run the --ssh flow and return the timeout _wait_ssh_port got."""
+    from testharness import _OutputCapture
+    mod = make_module()  # redirects HOME to the isolated test home
+    mod.lpb_setup = _FakeSetupOk()
+    mod._port_in_use = lambda port: False
+    marker = _first_run_marker()
+    try:
+        if first_run:
+            if os.path.exists(marker):
+                os.unlink(marker)
+        else:
+            os.makedirs(os.path.dirname(marker), exist_ok=True)
+            open(marker, "w").close()
+        captured = {}
+
+        def fake_wait(port, timeout=30):
+            captured["timeout"] = timeout
+            return wait_ok
+
+        mod._wait_ssh_port = fake_wait
+        out = _OutputCapture()
+        out.__enter__()
+        try:
+            mod.parse_cli(["--ssh", "ssh-ed25519 AAAA k@h"])
+            mod.apply_overrides()
+            mod.cmd_run()
+        finally:
+            out.__exit__(None, None, None)
+        assert captured.get("timeout") is not None, "_wait_ssh_port was not called"
+        return captured["timeout"]
+    finally:
+        if os.path.exists(marker):
+            os.unlink(marker)
+
+
+def test_ssh_first_run_waits_for_bootstrap():
+    print("TEST: first run (no .initialized) → long sshd wait (bootstrap)")
+    reset_mock()
+    t_first = _run_ssh_flow_timeout(wait_ok=True, first_run=True)
+    t_warm = _run_ssh_flow_timeout(wait_ok=True, first_run=False)
+    assert t_first >= 120, f"first-run wait too short: {t_first}s"
+    assert t_warm < t_first, f"warm wait ({t_warm}s) should be shorter than first-run ({t_first}s)"
+    print("  PASS\n")
+
+
+def test_ssh_first_run_failure_hint():
+    print("TEST: first-run wait exhausted → hint says the bootstrap may still be running")
+    from testharness import _OutputCapture
+    reset_mock()
+    mod = make_module()  # redirects HOME to the isolated test home
+    mod.lpb_setup = _FakeSetupOk()
+    mod._port_in_use = lambda port: False
+    mod._wait_ssh_port = lambda port, timeout=30: False
+    marker = _first_run_marker()
+    try:
+        if os.path.exists(marker):
+            os.unlink(marker)
+        out = _OutputCapture()
+        out.__enter__()
+        raised = None
+        try:
+            mod.parse_cli(["--ssh", "ssh-ed25519 AAAA k@h"])
+            mod.apply_overrides()
+            mod.cmd_run()
+        except mod.DevstackError:
+            raised = "DevstackError"
+        finally:
+            out.__exit__(None, None, None)
+        out_text = "".join(out.out)
+        assert raised == "DevstackError", "must fail when the port never opens"
+        assert "SSH server ready" not in out_text
+        assert "bootstrap" in out_text, "first-run failure must mention the bootstrap"
+        assert "lpb --logs" in out_text, "first-run failure must point at the live log"
+    finally:
+        if os.path.exists(marker):
+            os.unlink(marker)
+    print("  PASS\n")
+
+
 TESTS = [
     test_ssh_explicit_key_literal,
     test_ssh_explicit_key_path,
+    test_ssh_explicit_key_tilde_path,
+    test_ssh_project_dir_as_value,
+    test_ssh_invalid_value_errors,
+    test_ssh_file_without_key_content_errors,
     test_ssh_no_key_no_profile_keys,
     test_ssh_auto_single_key,
     test_ssh_auto_multiple_keys_noninteractive,
@@ -254,6 +406,8 @@ TESTS = [
     test_ssh_port_in_use_fails_fast,
     test_ssh_no_false_success_when_port_never_opens,
     test_ssh_ready_only_after_port_opens,
+    test_ssh_first_run_waits_for_bootstrap,
+    test_ssh_first_run_failure_hint,
 ]
 
 

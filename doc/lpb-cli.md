@@ -28,7 +28,7 @@ Installs (no sudo required) into `~/.local/bin`:
 | `lpb [/path/to/project]` | Start a **Pi CLI session** (foreground). No path → last project, or `~` if none yet |
 | `lpb --web [/path]` | Start **VSCodium** (background), prints the connection URL |
 | `lpb --shell [/path]` | Interactive bash shell inside the container |
-| `lpb --ssh [pubkey\|path] [/path]` | Start an sshd server in the container for remote login (key auto-detected from `~/.ssh` when omitted) |
+| `lpb --ssh [pubkey\|path] [project]` | Start an sshd server in the container for remote login (key auto-detected from `~/.ssh` when omitted) |
 | `lpb --ssh --ssh-password [pw]` | SSH password login (random if omitted, shown once; can combine with key auth) |
 | `lpb --stop` | Stop the container |
 | `lpb --remove` | Stop + remove container + state dirs |
@@ -69,7 +69,18 @@ lpb /myproject -- --thinking high            # pass any pi flag
   profile (`~/.ssh/*.pub`). One key → used (confirmed on a TTY); several →
   numbered menu; none → error with a hint. Non-interactive: one key is used
   automatically, several → explicit selection required.
-- **Explicit key still wins**: `lpb --ssh <pubkey|path>` (literal key or file).
+- **Explicit key still wins**: `lpb --ssh <pubkey|path>` — a literal inline
+  key or a path to a `.pub` file (tilde expanded). A value that is an
+  existing *directory* is treated as the project dir (the key menu still
+  appears); anything else is an error — a nonexistent path is never silently
+  accepted as a key.
+- **First-run wait**: on the first boot the container bootstraps (config-repo
+  clone, volume chown, provider setup) *before* sshd starts, which can take a
+  few minutes. `lpb` detects first run (no `.initialized` in the state dir),
+  waits up to 5 minutes with progress notes (30 s on warm starts), and only
+  then reports a failure — with the last container log lines and a
+  first-run-aware hint (`lpb --logs` shows the bootstrap finishing; sshd
+  starts automatically once it completes).
 - **Password login**: `lpb --ssh --ssh-password` (random, printed once) or
   `lpb --ssh --ssh-password <pw>` (user-chosen). The container user's password
   is set at start (`chpasswd`) and `PasswordAuthentication` is enabled in the
