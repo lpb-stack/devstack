@@ -416,11 +416,14 @@ LPB_ENGINE_PATH = Path(__file__).resolve()
 
 
 def _fetch_file(url: str, dest: Path, staging: Path) -> None:
-    """Download url and atomically replace dest if the content changed."""
+    """Download url and atomically replace dest if the content changed.
+
+    A missing dest is treated as "content changed" — self-update uses this to
+    install files the original (pre-package) install.sh never laid down.
+    """
     with urllib.request.urlopen(url, timeout=10) as resp:
         new_data = resp.read()
-    with open(dest, "rb") as f:
-        old_data = f.read()
+    old_data = dest.read_bytes() if dest.is_file() else None
     if new_data == old_data:
         return
     info(f"Updating {dest.name}...")
@@ -442,7 +445,10 @@ def self_update() -> None:
 
     Also refreshes lpb-config / lpb-devstack + the localpibox package under
     CONFIG_DIR so the host-side setup wizard (lpb setup / lpb doctor) stays
-    in sync with the engine — mirroring scripts/install.sh.
+    in sync with the engine — mirroring scripts/install.sh. The localpibox
+    package is installed unconditionally (legacy installs predate it and the
+    engine's wizard import depends on it); the standalone tools are only
+    refreshed when already present.
     """
     engine_path = LPB_ENGINE_PATH
     if not engine_path.is_file():
@@ -471,9 +477,9 @@ def self_update() -> None:
         }
         for rel, files in localpibox_dirs.items():
             pkg_dir = CONFIG_DIR / rel
-            if pkg_dir.is_dir():
-                for f in files:
-                    _fetch_file(base_url + rel + "/" + f, pkg_dir / f, staging)
+            pkg_dir.mkdir(parents=True, exist_ok=True)
+            for f in files:
+                _fetch_file(base_url + rel + "/" + f, pkg_dir / f, staging)
         # Keep the installed VERSION file in sync (best effort —
         # `lpb --version` reads it; only present in install.sh installs)
         version_dest = CONFIG_DIR / "VERSION"
