@@ -1909,11 +1909,84 @@ def _run_web(c: ContainerClient, project_dir: str, env_vars: list[str],
         info(f"  Container status: {cfg.container_cmd} ps --filter name={cfg.container_name}")
 
 
+def _show_log_tail(c: ContainerClient, n: int = 15) -> None:
+    """Print the last n container log lines (indented) — failure triage.
+
+    Best-effort: any failure to read the logs is swallowed (the container
+    log is a diagnostic aid, not a gate)."""
+    try:
+        r = subprocess.run(
+            [cfg.container_cmd, "logs", "--tail", str(n), cfg.container_name],
+            capture_output=True, text=True, timeout=10,
+        )
+        lines = [l for l in (r.stdout or "").splitlines() if l.strip()]
+        if not lines:
+            return
+        for l in lines[-n:]:
+            info(f"    {l}")
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        warn("  (could not read container logs — run: lpb --logs)")
+
+
+def _port_in_use(port) -> bool:
+    """True if something already binds the given TCP port on this host."""
+    port = int(port)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("0.0.0.0", port))
+        return False
+    except OSError:
+        return True
+    finally:
+        s.close()
+
+
+def _wait_ssh_port(port, timeout: int = 20) -> bool:
+    """Wait until the sshd port accepts TCP connections.
+
+    start.sh launches sshd asynchronously after the container starts, so
+    connecting right after 'run' returns is too early. The SSH banner is
+    verified — a bare connect cannot tell sshd apart from whatever else
+    holds the host port, and claiming 'ready' for a non-sshd holder would
+    repeat the silent-failure bug."""
+    port = int(port)
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=2)
+        except (socket.timeout, socket.error, OSError):
+            time.sleep(1)
+            continue
+        s.settimeout(2)
+        try:
+            banner = s.recv(64)
+        except (socket.timeout, socket.error, OSError):
+            banner = b""
+        finally:
+            s.close()
+        if banner.startswith(b"SSH-"):
+            return True
+        time.sleep(1)
+    return False
+
+
 def _run_ssh(c: ContainerClient, project_dir: str, env_vars: list[str],
              volumes: list[str], userns: str | None) -> None:
     """SSH mode: start a detached sshd server; the user logs in remotely
     with their private key (never uploaded)."""
     info("Starting SSH server (background)...")
+    # Fail fast if the host port is taken: with --network host, sshd inside
+    # the container binds the host port directly, and daemon-mode sshd fails
+    # SILENTLY (exit 0, error to syslog which the container has no daemon
+    # for) when the port is busy — the container would come up without SSH
+    # and every log line would look fine.
+    if _port_in_use(cfg.ssh_port):
+        err(f"port {cfg.ssh_port} is already in use on the host — the SSH server cannot start",
+            "Find the holder:  ss -tlnp | grep " + str(cfg.ssh_port))
+        err("", "Stop it and re-run, or pick another port:  lpb --ssh --ssh-port <port>")
+        raise DevstackError
+
     container_id, stdout, stderr, rc = c.containers_run(
         image=cfg.image_name, name=cfg.container_name, network="host",
         env=env_vars, volumes=volumes, userns=userns, detach=True,
@@ -1934,7 +2007,19 @@ def _run_ssh(c: ContainerClient, project_dir: str, env_vars: list[str],
     host = _get_host_for_url()
     port = cfg.ssh_port
     user = "lpb"  # container user (uid 1000) is lpb
-    done("\u2713 SSH server ready (background)")
+
+    # Wait for sshd to actually listen before claiming success — the SSH
+    # banner probe is the only ground truth (the host cannot see start.sh's
+    # log in detached mode).
+    if not _wait_ssh_port(port):
+        warn(f"Container started but SSH port {port} is NOT accepting the SSH protocol.")
+        warn("  sshd failed to start inside the container — last container log lines:")
+        _show_log_tail(c, 15)
+        err("SSH server not ready (container is still running)",
+            "Fix the cause above, then:  lpb --stop && lpb --ssh  (or --ssh-port <port>)")
+        raise DevstackError
+
+    done(f"\u2713 SSH server ready (background) — listening on port {port}")
     info(f"  Connect:  ssh -p {port} {user}@{host}")
     if cfg.ssh_pubkey:
         info("  Auth:     key — your pubkey is in authorized_keys (private key never uploaded)")

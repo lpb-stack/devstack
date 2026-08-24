@@ -165,6 +165,80 @@ def test_ssh_password_only_env_vars():
     print("  PASS\n")
 
 
+# ─── sshd launch verification (daemon-mode sshd fails SILENTLY — exit 0 —
+#     when it cannot bind the host port; the error goes to syslog which the
+#     container has no daemon for. Both sides must therefore verify the
+#     port instead of trusting the exit code.) ─────────────────────────────
+
+class _FakeSetupOk:
+    """Provider healthy → no wizard during the launch flow."""
+
+    def quick_status(self, agent_dir, timeout=3.0):
+        return "ok", "fake ok"
+
+    def lemonade_creds(self, agent_dir):
+        return None
+
+    def run_wizard(self, **kw):
+        raise AssertionError("wizard should not run (provider ok)")
+
+
+def _run_ssh_flow(port_in_use: bool, wait_ok: bool):
+    """Full --ssh launch (cmd_run) with controlled port checks.
+
+    Returns (captured output, raised DevstackError or None)."""
+    from testharness import _OutputCapture
+    mod = make_module()
+    mod.lpb_setup = _FakeSetupOk()
+    mod._port_in_use = lambda port: port_in_use
+    mod._wait_ssh_port = lambda port, timeout=20: wait_ok
+    out = _OutputCapture()
+    raised = None
+    out.__enter__()
+    try:
+        mod.parse_cli(["--ssh", "ssh-ed25519 AAAA k@h"])
+        mod.apply_overrides()
+        mod.cmd_run()
+    except mod.DevstackError as e:
+        raised = e
+    finally:
+        out.__exit__(None, None, None)
+    return "".join(out.out), raised
+
+
+def test_ssh_port_in_use_fails_fast():
+    print("TEST: host port busy → refuse start with actionable error (no container)")
+    from testharness import MOCK_STATE
+    reset_mock()
+    out, raised = _run_ssh_flow(port_in_use=True, wait_ok=True)
+    assert raised is not None, "expected DevstackError when the host port is busy"
+    assert "already in use" in out
+    assert "ss -tlnp" in out
+    assert MOCK_STATE["running"] is False, "container must not start when the port is busy"
+    print("  PASS\n")
+
+
+def test_ssh_no_false_success_when_port_never_opens():
+    print("TEST: sshd never listens → no 'SSH server ready' claim")
+    reset_mock()
+    out, raised = _run_ssh_flow(port_in_use=False, wait_ok=False)
+    assert raised is not None, "must not exit clean when the port never opens"
+    assert "SSH server ready" not in out, "must not claim success when the port never opens"
+    assert "NOT accepting the SSH protocol" in out
+    assert "lpb --stop" in out
+    print("  PASS\n")
+
+
+def test_ssh_ready_only_after_port_opens():
+    print("TEST: port opens → 'SSH server ready' shown once")
+    reset_mock()
+    out, raised = _run_ssh_flow(port_in_use=False, wait_ok=True)
+    assert raised is None
+    assert "SSH server ready" in out
+    assert "listening on port" in out
+    print("  PASS\n")
+
+
 TESTS = [
     test_ssh_explicit_key_literal,
     test_ssh_explicit_key_path,
@@ -177,6 +251,9 @@ TESTS = [
     test_ssh_key_and_password_combine,
     test_ssh_env_vars_passthrough,
     test_ssh_password_only_env_vars,
+    test_ssh_port_in_use_fails_fast,
+    test_ssh_no_false_success_when_port_never_opens,
+    test_ssh_ready_only_after_port_opens,
 ]
 
 

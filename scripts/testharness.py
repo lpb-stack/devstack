@@ -262,6 +262,12 @@ def make_module(lpb_path: str | None = None):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
 
+    # Keep the ssh-mode port checks hermetic: _run_ssh probes the real host
+    # port (bind test + connect wait). Default to a healthy port; tests that
+    # exercise the failure paths override these per-module.
+    mod._port_in_use = lambda port: False
+    mod._wait_ssh_port = lambda port, timeout=20: True
+
     return mod
 
 

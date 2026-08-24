@@ -630,12 +630,63 @@ EOF
             _unlock_account "${_ssh_owner}" "${SUDO}" info
 
             info "Starting sshd on port ${LPB_SSH_PORT:-2222}..."
-            # Run sshd in the foreground in the background; it requires root for
-            # privilege separation, so use sudo when available.
+            # Run sshd in FOREGROUND mode (-D) in the background, capturing
+            # its output to a log file. Daemon mode is a black hole: when it
+            # cannot bind the port (or fails any other way) it exits 0 and
+            # writes the error to syslog — which does not exist in this
+            # container — so the failure is invisible and the cause is lost.
+            # -D keeps every error visible in ${SSHD_LOG} for the triage
+            # below. The sleep-infinity keep-alive at the end of shell mode
+            # keeps the container alive; sshd runs as its sibling.
+            # sshd requires root for privilege separation — use sudo when
+            # available.
+            SSHD_LOG="${HOME_DIR}/.ssh/sshd.log"
+            : > "${SSHD_LOG}"
             if [[ -n "${SUDO}" ]]; then
-                ${SUDO} /usr/sbin/sshd -f "${SSHD_CONFIG}" 2>&1 | tail -3
+                ${SUDO} /usr/sbin/sshd -D -f "${SSHD_CONFIG}" >> "${SSHD_LOG}" 2>&1 &
             else
-                /usr/sbin/sshd -f "${SSHD_CONFIG}" 2>&1 | tail -3
+                /usr/sbin/sshd -D -f "${SSHD_CONFIG}" >> "${SSHD_LOG}" 2>&1 &
+            fi
+            # VERIFY sshd is actually listening and speaking the SSH
+            # protocol. A bare TCP connect is not enough: it cannot tell
+            # sshd apart from whatever else holds the host port, so the SSH
+            # banner decides. In --ssh mode the container log is the only
+            # feedback channel, so a failure here must be loud — and show
+            # the ACTUAL error from the sshd log, not a guess.
+            _sshd_port="${LPB_SSH_PORT:-2222}"
+            _sshd_up=false
+            _port_open=false
+            for _ in $(seq 1 10); do
+                if timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/${_sshd_port}; head -1 <&3" 2>/dev/null | grep -q "^SSH-"; then
+                    _sshd_up=true
+                    break
+                elif timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/${_sshd_port}" 2>/dev/null; then
+                    _port_open=true   # something holds the port, but it is not (yet) sshd
+                fi
+                sleep 0.5
+            done
+            if [[ "${_sshd_up}" = "true" ]]; then
+                info "sshd is listening on port ${_sshd_port}."
+            elif [[ "${_port_open}" = "true" ]]; then
+                warn "Port ${_sshd_port} is open but NOT the SSH server — sshd could not bind: the port is already in use on the HOST."
+                warn "On the host:  ss -tlnp | grep ${_sshd_port}   (or: netstat -tlnp | grep ${_sshd_port})"
+                warn "Stop that process and re-run 'lpb --ssh' (or pick another port with --ssh-port)."
+            else
+                warn "sshd is NOT listening on port ${_sshd_port} — SSH login will fail."
+                if [[ -s "${SSHD_LOG}" ]]; then
+                    warn "  sshd said (last lines of ${SSHD_LOG}):"
+                    while IFS= read -r _l; do warn "    ${_l}"; done < <(tail -5 "${SSHD_LOG}")
+                else
+                    warn "  sshd produced no output — it may not have started at all."
+                fi
+                _t_out=$(${SUDO} /usr/sbin/sshd -t -f "${SSHD_CONFIG}" 2>&1) || true
+                if [[ -n "${_t_out}" ]]; then
+                    warn "  sshd config test (sshd -t) failed:"
+                    while IFS= read -r _l; do warn "    ${_l}"; done < <(printf '%s\n' "${_t_out}")
+                fi
+                warn "  Common causes: host holds port ${_sshd_port} (ss -tlnp | grep ${_sshd_port}),"
+                warn "  host key missing/bad permissions, missing /run/sshd, or no passwordless sudo."
+                warn "  Clear the cause, then re-run 'lpb --ssh' (or pick another port with --ssh-port)."
             fi
         else
             warn "sshd not available; SSH disabled (bare shell only)."
