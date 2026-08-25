@@ -161,7 +161,7 @@ on `main` is the trigger:
 
 Then align the runtime to the stable pipeline:
 ```bash
-lpb-devstack --tag main workspace sync --extensions   # pins → stable tag
+lpb-config --tag main sync-pins   # pins → stable version
 pi update --extensions
 lpb-devstack --tag main validate
 ```
@@ -206,6 +206,8 @@ push. `bump` (without `--push`) warns about this.
 lpb-config status | update | reset [--force] | merge   # config repo
 lpb-config render [--force]                             # regen runtime config from templates
 lpb-config align                                        # pins → latest GitHub tags
+lpb-config sync-pins [--tag dev|main]                   # pins → pipeline's stack VERSION
+lpb-config setup                                        # first-run setup wizard
 lpb-config memory show | setup                          # lpb-memory config
 ```
 
@@ -223,7 +225,7 @@ local keys win in the memory config).
 ```bash
 lpb-devstack bump [--minor|--major] [--set V] [--no-commit] [--push]
 lpb-devstack tag-repos [--branch dev|main] [--version V] [--dry-run]
-lpb-devstack workspace status | sync [--extensions] | ensure [--fix]
+lpb-devstack workspace status | sync
 lpb-devstack validate
 lpb-devstack release status | docs-ready | promote [--yes] [--dry-run] [--rebase] [--force]
 lpb-devstack validate-hooks     # full pre-commit checks (tests included)
@@ -246,7 +248,7 @@ Both tools are thin CLIs over the shared `scripts/localpibox/stack/` library
    merge) — this is the recovery path when the rendered file is lost or
    its pins are stale after a stack version move
 4. No model/provider preconfigured — user runs `/login lemonade`
-5. Pin sync: `lpb-devstack workspace sync --extensions`
+5. Pin sync: `lpb-config sync-pins`
    (main pipeline reads the stable version from devstack `origin/main`)
 6. `lpb-devstack validate` checks pins match the current stack version
 7. Persistent on the host volume — survives container rebuilds

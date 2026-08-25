@@ -570,7 +570,7 @@ def cmd_release_promote(*, assume_yes: bool, dry_run: bool, rebase: bool,
     cons.info(f"CI (main pipeline) now builds :{stable_version}-* / :main-* / :latest-*")
     cons.info("and tags the 5 repos at the stable branches.")
     cons.info("After CI passes:")
-    cons.info("  1. lpb-devstack --tag main workspace sync-pins")
+    cons.info("  1. lpb-config --tag main sync-pins")
     cons.info("  2. pi update --extensions")
     cons.info(f"  (If CI's tag-repos didn't run: lpb-devstack tag-repos --branch main --version {stable_version})")
     cons.info(f"Docs: the main pipeline publishes the stable docs version "

@@ -224,11 +224,15 @@ per-call. Cannot point at local Lemonade server. Not usable with this stack.
 
 ### Support Files
 
+Paths match the Dockerfile `COPY` lines (source of truth):
+
 | Path | Purpose |
 |---|---|
-| `/opt/pi-support/bin/session-uuid` | Generate unique session IDs |
-| `/opt/pi-support/bin/browser-state-cleanup` | Cleanup browser state volumes |
+| `/opt/devstack/install-browser.py` | Install Chrome-for-Testing + agent-browser |
+| `/opt/devstack/validate.py` | Stack validation helper |
+| `/opt/pi-support/browser-state-cleanup.py` | Cleanup browser state volumes |
 | `/opt/pi-support/browser-validate.ts` | Browser validation entry point |
-| `/opt/pi-support/start.sh` | Start script |
+| `/opt/pi-support/install-openspec.py` | Bootstrap OpenSpec in a project |
+| `/opt/devstack/start.sh` | Container start script |
 | `/opt/pi-support/config/agent-browser-action-policy.json` | Agent action policies |
 | `/opt/pi-support/validate-subagent-output.ts` | Subagent output validation |

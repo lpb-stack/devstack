@@ -140,7 +140,7 @@ export LPB_IMAGE_TAG=main
 lpb /project
 
 # Pin an exact version
-lpb --tag 0.0.55-lpb-dev /project
+lpb --tag 0.0.N-lpb-dev /project
 
 # Custom editor port (shell env wins over .env and defaults)
 export LPB_ED_PORT=8080

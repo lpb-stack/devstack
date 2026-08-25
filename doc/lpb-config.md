@@ -21,11 +21,12 @@ see [lpb-devstack reference](lpb-devstack.md).
 | `lpb-config reset [--force]` | Re-clone config repo, destroy local changes (with confirmation) |
 | `lpb-config merge` | Open git merge flow for advanced users (conflict resolution) |
 
-### Align
+### Align & Pin Sync
 
 | Command | Description |
 |---|---|
 | `lpb-config align` | Update extension pins in settings.json to latest GitHub tags |
+| `lpb-config sync-pins` | Sync extension pins to the pipeline's stack VERSION (`--tag main` for the stable version) |
 
 ### Memory Management
 
@@ -44,9 +45,11 @@ see [lpb-devstack reference](lpb-devstack.md).
 
 ### Pipeline Override
 
-`--tag dev|main` is accepted on any command (validates the value) for
-compatibility; the remaining commands operate on the config repo
-regardless of pipeline.
+`sync-pins` is the only pipeline-sensitive command: `lpb-config --tag main
+sync-pins` syncs pins to the stable stack version. Without `--tag`, the
+pipeline is detected via `detect_pipeline()` — `LPB_IMAGE_TAG` env, then the
+devstack `VERSION` file, then `LPB_VERSION` — the same resolution
+`lpb-devstack` uses. All other commands operate on the config repo only.
 
 ## Settings.json Lifecycle
 
@@ -59,12 +62,12 @@ Settings.json is **template-driven**, not git-tracked:
    as a fallback (`lpb-config render`)
 3. Model/provider are configured interactively with live validation — see
    the First-Run Setup section above (no `/login` needed for lemonade)
-4. Pin sync: `lpb-devstack workspace sync-pins` (main pipeline reads
+4. Pin sync: `lpb-config sync-pins` (main pipeline reads
    stable version from devstack `origin/main`)
 5. `lpb-devstack validate` checks pins match the current stack version
 6. Settings.json persists on the host volume — survives container rebuilds
 
-Example pin: `git:github.com/lpb-stack/pi-subagents@0.0.57-lpb-dev`
+Example pin: `git:github.com/lpb-stack/pi-subagents@0.0.N-lpb-dev`
 
 ## lpb-memory Config Lifecycle
 

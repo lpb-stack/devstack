@@ -19,7 +19,7 @@ Config repo management inside the container (`status` / `update` / `reset` /
 
 | Command | Description |
 |---|---|
-| `lpb-devstack bump` | Bump patch (`0.0.57-lpb-dev` → `0.0.58-lpb-dev`), commit |
+| `lpb-devstack bump` | Bump patch (`0.0.N-lpb-dev` → `0.0.N+1-lpb-dev`), commit |
 | `lpb-devstack bump --minor` | Bump minor (`0.0.9` → `0.1.0`), commit |
 | `lpb-devstack bump --major` | Bump major, commit |
 | `lpb-devstack bump --set 0.1.0-lpb-dev` | Explicit version |
@@ -51,7 +51,7 @@ partially-tagged stack is a release bug.
 |---|---|
 | `lpb-devstack workspace status` | Show branches + alignment for all repos |
 | `lpb-devstack workspace sync` | Clone missing repos, create symlinks, align branches, pull latest (the single write path) |
-| `lpb-devstack workspace sync-pins` | Sync settings.json pins to the pipeline's stack version |
+| `lpb-config sync-pins` | Sync settings.json pins to the pipeline's stack version |
 
 ### Stack Validation
 
@@ -120,7 +120,7 @@ lpb-devstack --tag dev workspace sync     # sync dev pipeline repos
 ```bash
 # 1. Work happens on dev as usual (CI runs tests on every push)
 # 2. When ready to ship:
-lpb-devstack bump                 # 0.0.57-lpb-dev → 0.0.58-lpb-dev (+ commit)
+lpb-devstack bump                 # 0.0.N-lpb-dev → 0.0.N+1-lpb-dev (+ commit)
 git push origin dev               # CI sees the VERSION change → build + tag
 # 3. Verify:
 lpb-devstack workspace status
@@ -135,7 +135,7 @@ lpb-devstack release status                    # readiness check (repos + docs)
 lpb-devstack release promote --dry-run         # inspect plan
 lpb-devstack release promote                   # dev → stable + push (blocked until docs ready)
 lpb-devstack tag-repos --branch main           # tag the 5 repos on stable branches
-lpb-devstack --tag main workspace sync-pins   # pins → stable tag
+lpb-config --tag main sync-pins   # pins → stable tag
 pi update --extensions
 # CI (main pipeline) then builds images, tags repos, and publishes the
 # stable docs version (https://lpb-stack.github.io/devstack/<version>/)

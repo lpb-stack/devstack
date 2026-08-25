@@ -144,7 +144,7 @@ Two image flavours are published to `ghcr.io/lpb-stack/devstack`:
 | `--tag dev` (or `--dev`) | latest dev-pipeline version (`0.0.x-lpb-dev-…`) |
 | `--tag main` (or `--main`) | latest stable version (`0.0.x-lpb-…`) |
 | `--tag latest` | same as `main` |
-| `--tag 0.0.55-lpb-dev` | pin to an exact version |
+| `--tag 0.0.N-lpb-dev` | pin to an exact version |
 | `LPB_IMAGE_TAG=…` | persistent env-var override |
 | *(no tag)* | last-used version (pinned in `~/.lpb-stack/devstack/last-version`), else the stable pipeline |
 
@@ -167,15 +167,15 @@ Tags CI publishes: `:{v}-cli/web`, `:dev-cli/web`, `:main-cli/web`,
 ```
 User runs:  lpb --main /project
 
-1. resolve_web_image("main") → reads remote main-branch VERSION (0.0.55-lpb)
-2. image = ghcr.io/lpb-stack/devstack:0.0.55-lpb-web
+1. resolve_web_image("main") → reads remote main-branch VERSION (0.0.N-lpb)
+2. image = ghcr.io/lpb-stack/devstack:0.0.N-lpb-web
 3. podman pull (if not cached)
 4. podman run --name lpb-stack --network host \
      -v /project:/home/lpb/workspace/project \
      -v ~/.lpb-stack/state:/home/lpb/.pi \
      -v ~/.lpb-stack/agent-browser:/home/lpb/.agent-browser \
-     ghcr.io/lpb-stack/devstack:0.0.55-lpb-web
-5. pins 0.0.55-lpb in ~/.lpb-stack/devstack/last-version
+     ghcr.io/lpb-stack/devstack:0.0.N-lpb-web
+5. pins 0.0.N-lpb in ~/.lpb-stack/devstack/last-version
 ```
 
 ## Configuration
@@ -227,7 +227,7 @@ working stable tree.)
 ```bash
 lpb ~/projects/myapp                        # Pi CLI (stable pipeline, or last pin; --dev for dev)
 lpb --main ~/projects/myapp                 # stable pipeline
-lpb --tag 0.0.55-lpb-dev ~/projects/myapp   # pin to an exact version
+lpb --tag 0.0.N-lpb-dev ~/projects/myapp   # pin to an exact version
 lpb --web --port 8080 ~/projects/myapp      # VSCodium on port 8080
 lpb --shell ~/projects/myapp                # bash inside the container
 lpb ~/projects/myapp -- -p "fix the bug"    # one-shot pi run

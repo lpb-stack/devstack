@@ -205,12 +205,12 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
                         f"  {pkg_name} pinned",
                         False,
                         f"@{pinned_tag} (expected: {target_version})",
-                        "lpb-devstack workspace sync-pins",
+                        "lpb-config sync-pins",
                     )
             else:
                 check(f"  {pkg_name} pinned", False,
                       "not found in settings.json",
-                      "lpb-devstack workspace sync-pins")
+                      "lpb-config sync-pins")
     else:
         check("settings.json exists", False,
               f"{settings_path} not found",

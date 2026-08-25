@@ -63,10 +63,10 @@ Extensions are pinned in the `packages` array of `settings.json` as
 ```json
 {
   "packages": [
-    "git:github.com/lpb-stack/lemonade-pi-plugin@0.0.55-lpb-dev",
-    "git:github.com/lpb-stack/lpb-memory@0.0.55-lpb-dev",
+    "git:github.com/lpb-stack/lemonade-pi-plugin@0.0.N-lpb-dev",
+    "git:github.com/lpb-stack/lpb-memory@0.0.N-lpb-dev",
     "npm:pi-mcp-adapter",
-    "git:github.com/lpb-stack/pi-subagents@0.0.55-lpb-dev",
+    "git:github.com/lpb-stack/pi-subagents@0.0.N-lpb-dev",
     "npm:pi-powerline-footer",
     "@upstash/context7-mcp"
   ]
@@ -75,7 +75,7 @@ Extensions are pinned in the `packages` array of `settings.json` as
 
 The `__LPB_VERSION__` placeholder in the template is replaced with the
 stack version at boot. Pins are synced to a new stack version by
-`lpb-devstack workspace sync-pins`.
+`lpb-config sync-pins`.
 
 ## Extension Clones
 
@@ -146,7 +146,7 @@ lpb-config update
 lpb-devstack validate
 
 # Sync extension pins to stack version
-lpb-devstack workspace sync-pins
+lpb-config sync-pins
 
 # Reset config repo
 lpb-config reset

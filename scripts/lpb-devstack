@@ -13,8 +13,6 @@ Usage:
       Show workspace repo branches + alignment.
   lpb-devstack workspace sync
       Clone/symlink/align/pull workspace repos (the single write path).
-  lpb-devstack workspace sync-pins
-      Sync settings.json extension pins to the pipeline's stack version.
   lpb-devstack validate
       Full stack alignment check (repos, branches, pins, env).
   lpb-devstack release status
@@ -76,7 +74,6 @@ from localpibox.stack.workspace import (  # noqa: E402
     _resolve_repo_path,
     cmd_workspace_status,
     cmd_workspace_sync,
-    cmd_workspace_sync_pins,
 )
 from localpibox.stack.validate import cmd_validate  # noqa: E402
 from localpibox.stack.release import (  # noqa: E402
@@ -335,7 +332,6 @@ def main(argv: list[str] | None = None) -> int:
     ws_sub = p_ws.add_subparsers(dest="workspace_command")
     _add_subparser(ws_sub, "status", "Show workspace repo branches + alignment")
     _add_subparser(ws_sub, "sync", "Prepare workspace: clone missing repos, create symlinks, align branches, pull latest")
-    _add_subparser(ws_sub, "sync-pins", "Sync settings.json extension pins to the pipeline's stack version")
 
     # Stack validation
     _add_subparser(sub, "validate", "Full stack alignment check (repos, branches, pins, env)")
@@ -389,8 +385,6 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_workspace_status(pipeline, cons)
         if args.workspace_command == "sync":
             return cmd_workspace_sync(pipeline, cons)
-        if args.workspace_command == "sync-pins":
-            return cmd_workspace_sync_pins(pipeline, cons)
     if args.command == "validate":
         return cmd_validate(pipeline, cons)
     if args.command == "release":

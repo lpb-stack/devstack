@@ -31,8 +31,10 @@ Template rendering:
 Moved to lpb-devstack (dev-time workspace tool):
   lpb-devstack bump | tag-repos | workspace ... | validate | release ...
 
-`--tag dev|main` is still accepted (validates the value) for muscle memory;
-the remaining commands operate on the config repo regardless of pipeline.
+`--tag dev|main` selects the pipeline for `sync-pins` (the only
+pipeline-sensitive command). Without `--tag`, the pipeline is detected via
+detect_pipeline() (LPB_IMAGE_TAG env, then the devstack VERSION file,
+then LPB_VERSION — same resolution as lpb-devstack).
 
 Environment:
   AGENT_DIR         — Config repo path (default: /home/lpb/.pi/agent)
@@ -83,7 +85,8 @@ from localpibox.stack.repos import (  # noqa: E402
     LPB_EXTENSION_REPOS,
     migrate_legacy_layout,
 )
-from localpibox.stack.version import get_version  # noqa: E402
+from localpibox.stack.version import detect_pipeline, get_version  # noqa: E402
+from localpibox.stack.workspace import cmd_workspace_sync_pins  # noqa: E402
 
 # ─── Config repo helpers ──────────────────────────────────────────────────
 
@@ -631,8 +634,9 @@ def main(argv: list[str] | None = None) -> int:
             "  CONFIG_REF        Branch to track (default: main)\n"
             "  LPB_GITHUB_TOKEN  GitHub token for authenticated git operations\n\n"
             "Pipeline:\n"
-            "  Detected from VERSION file or LPB_IMAGE_TAG env var.\n"
-            "  Override with --tag dev|main on any command.\n\n"
+            "  Detected via detect_pipeline(): --tag, then LPB_IMAGE_TAG env,\n"
+            "  then the devstack VERSION file, then LPB_VERSION (same as lpb-devstack).\n"
+            "  Only 'sync-pins' is pipeline-sensitive.\n\n"
             "Dev/workspace operations live in lpb-devstack:\n"
             "  lpb-devstack bump | tag-repos | workspace ... | validate | release ..."
         ),
@@ -659,6 +663,10 @@ def main(argv: list[str] | None = None) -> int:
         help="overwrite existing rendered files (merged — user keys preserved)",
     )
     _add_subparser(sub, "align", "Align settings.json extension pins to latest tags")
+    _add_subparser(
+        sub, "sync-pins",
+        "Sync settings.json extension pins to the pipeline's stack version",
+    )
 
     # First-run setup (provider + default model + memory)
     p_setup = _add_subparser(
@@ -707,6 +715,9 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_render(agent_dir, cons, force=force)
     if args.command == "align":
         return cmd_align(agent_dir, remote, ref, cons)
+    if args.command == "sync-pins":
+        pipeline = detect_pipeline(args.tag)
+        return cmd_workspace_sync_pins(pipeline, cons)
     if args.command == "setup":
         return cmd_setup(agent_dir=agent_dir,
                          non_interactive=getattr(args, "non_interactive", False),

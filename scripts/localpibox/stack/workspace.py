@@ -439,6 +439,6 @@ def cmd_workspace_sync_pins(pipeline: str, cons: Console) -> int:
         cons.info("")
         cons.done("Extension pins updated. Run 'pi update --extensions' to apply.")
     else:
-        cons.info("Skipped. Run 'lpb-devstack workspace sync-pins' when ready.")
+        cons.info("Skipped. Run 'lpb-config sync-pins' when ready.")
 
     return 0 if not mismatches else 1
