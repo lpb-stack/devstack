@@ -12,10 +12,11 @@ boot by `start.sh`.
 ├── settings.json.template    → template (generated at boot → settings.json)
 ├── settings.json             → runtime config (NOT git-tracked, on host volume)
 ├── lpb-memory-config.json.template → memory config template (→ lpb-memory-config.json)
+├── mcp.json.template         → MCP template (generated at first boot → mcp.json)
 ├── AGENTS.md                 → agent instructions (model config, MCP servers, skills)
 ├── README.md / CONTRIBUTING.md / VALIDATION.md
 ├── pi-defaults.json          → local-first defaults (e.g. subagent model)
-├── mcp.json                  → MCP server configuration
+├── mcp.json                  → runtime MCP config (NOT git-tracked; wizard step 6 toggles servers)
 ├── .env.example              → template for bare-name env vars (EXA_API_KEY, …)
 ├── install.sh                → host install helper
 ├── VERSION                   → config repo version
@@ -76,6 +77,23 @@ Extensions are pinned in the `packages` array of `settings.json` as
 The `__LPB_VERSION__` placeholder in the template is replaced with the
 stack version at boot. Pins are synced to a new stack version by
 `lpb-config sync-pins`.
+
+## mcp.json Lifecycle
+
+Same template-driven pattern (`mcp.json.template` → `mcp.json`, rendered
+without version placeholders):
+
+1. **Boot**: the setup wizard renders `mcp.json` (fallback: `start.sh` via
+   `lpb-config render`)
+2. **Wizard step 6 (MCP servers)**: interactive setups list every server in
+   `mcp.json` (exa, agent-browser, chrome-devtools, context7-mcp by default)
+   and offer an enable/disable toggle per server — the pi-mcp-adapter honors
+   the explicit `"enabled": false` flag; non-interactive boots keep the
+   template defaults (chrome-devtools off, the rest on)
+3. **Persistence**: `mcp.json` lives on the host volume — it survives
+   container rebuilds; `lpb-config render` regenerates it when missing
+   (e.g. after `lpb-config reset`)
+4. **Effect**: changes apply on Pi restart (or a new session)
 
 ## Extension Clones
 

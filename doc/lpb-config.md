@@ -81,6 +81,19 @@ Same template-driven pattern:
 3. Tune any time: `lpb-config memory setup` (same wizard step, standalone)
 4. Review: `lpb-config memory show`
 
+## MCP Config Lifecycle
+
+Same template-driven pattern (`mcp.json.template` → `mcp.json`):
+
+1. The setup wizard (step 6, MCP servers) lists every server in `mcp.json`
+   with a description and API-key note, and offers an enable/disable toggle
+   per server (Enter keeps the current state) — the pi-mcp-adapter honors
+   the explicit `"enabled": false` flag; non-interactive boots keep the
+   template defaults
+2. `lpb-config render` regenerates `mcp.json` from the template when missing
+   (e.g. after `lpb-config reset`); `--force` merges (local keys win)
+3. Changes apply on Pi restart (or a new session)
+
 ## Quick Reference
 
 ```bash

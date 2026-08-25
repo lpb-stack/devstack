@@ -8,7 +8,8 @@ AND validates the installation before first use:
   [3] api key          — validated by fetching the model list (auth-aware)
   [4] default model    — picked from the server's live model list
   [5] lpb-memory       — full memory wizard (mode, transport, model, limits)
-  [6] persist + verify — auth.json, settings.json, lpb-memory-config.json
+  [6] MCP servers      — per-server enable/disable toggles (mcp.json)
+  [7] persist + verify — auth.json, settings.json, lpb-memory-config.json
 
 Principles:
   - Every step shows its live result (✓ or ✗ with the raw error and the
@@ -70,6 +71,15 @@ _MEMORY_DEFAULTS: dict = {
 
 _ABORT_TOKENS = ("q", "quit", "abort")
 _ANYWAY_TOKENS = ("a", "anyway", "skip")
+
+# Friendly metadata for the MCP step (name → (description, api-key note)).
+# Servers not listed here are offered with a "custom server" label.
+_MCP_SERVER_INFO: dict = {
+    "exa": ("web search + content fetch", "needs EXA_API_KEY (devstack .env: LPB_EXA_API_KEY)"),
+    "agent-browser": ("browser automation (navigate, click, fill, screenshots)", ""),
+    "chrome-devtools": ("Chrome DevTools diagnostics (off by default)", ""),
+    "context7-mcp": ("up-to-date library docs (Context7)", "optional CONTEXT7_API_KEY raises rate limits"),
+}
 
 
 # ─── Results ─────────────────────────────────────────────────────────────────
@@ -283,6 +293,7 @@ def render_templates(agent_dir: str | Path, cons: Console) -> bool:
     for template_name, out_name in (
         ("settings.json.template", "settings.json"),
         ("lpb-memory-config.json.template", "lpb-memory-config.json"),
+        ("mcp.json.template", "mcp.json"),
     ):
         template = agent_dir / template_name
         out = agent_dir / out_name
@@ -485,6 +496,80 @@ def configure_memory(agent_dir: str | Path, cons: Console, *,
     return True
 
 
+def configure_mcp(agent_dir: str | Path, cons: Console, *,
+                  interactive: bool,
+                  step_label: str = "MCP servers") -> bool:
+    """Configure MCP servers (wizard step 6).
+
+    Interactive: per-server enable/disable toggle (y / n / Enter = keep
+    current), 'q' aborts. Non-interactive: keeps the rendered defaults
+    (mcp.json must already exist — rendered from mcp.json.template in
+    step [1]). The pi-mcp-adapter reads mcp.json at Pi startup; a server
+    is disabled only when its "enabled" flag is explicitly false.
+
+    Returns True when mcp.json is usable (defaults kept or toggles
+    written); False when there is nothing to configure (no file — e.g.
+    config repo unavailable) or the write failed.
+    """
+    agent_dir = Path(agent_dir)
+    out = agent_dir / "mcp.json"
+    cfg = load_json_file(out)
+    if cfg is None:
+        cons.warn(f"  {out.name} not found — MCP step skipped "
+                  "(config repo template unavailable?)")
+        return False
+    servers = cfg.get("mcpServers")
+    if not isinstance(servers, dict) or not servers:
+        cons.warn(f"  {out.name} has no mcpServers — nothing to configure")
+        return True
+
+    def _summary() -> str:
+        enabled = [n for n, s in servers.items()
+                   if isinstance(s, dict) and s.get("enabled") is not False]
+        disabled = [n for n, s in servers.items()
+                    if isinstance(s, dict) and s.get("enabled") is False]
+        line = f"{', '.join(enabled) or 'none'} enabled"
+        if disabled:
+            line += f" · {', '.join(disabled)} disabled"
+        return line
+
+    if not interactive:
+        cons.info(f"  ✓ {out.name} — {_summary()} (template defaults)")
+        return True
+
+    cons.info(f"  {step_label} — enable the servers you use (Enter keeps current state)")
+    for name, srv in servers.items():
+        if not isinstance(srv, dict):
+            continue
+        desc, note = _MCP_SERVER_INFO.get(name, ("", ""))
+        currently_on = srv.get("enabled") is not False
+        label = desc or "custom server"
+        cons.info(f"  {name:<16} {label}" + (f"  ({note})" if note else ""))
+        target = currently_on
+        while True:
+            ans = _ask_cons(cons, f"    enable [y/n] [Enter = keep ({'enabled' if currently_on else 'disabled'}), q = abort]: ")
+            a = ans.lower()
+            if a in _ABORT_TOKENS:
+                raise AbortError
+            if not a:
+                break
+            if a in ("y", "yes"):
+                target = True
+                break
+            if a in ("n", "no"):
+                target = False
+                break
+            cons.warn(f"  Invalid answer {ans!r} — enter y, n, or press Enter (or 'q' to abort)")
+        srv["enabled"] = target
+    try:
+        out.write_text(json.dumps(cfg, indent=2) + "\n")
+    except OSError as e:
+        cons.error(f"  ✗ could not write {out.name}: {e}")
+        return False
+    cons.info(f"  ✓ {out.name} — {_summary()}")
+    return True
+
+
 class AbortError(Exception):
     """User aborted the wizard (EOF/Ctrl-C or 'q')."""
 
@@ -671,8 +756,20 @@ def run_wizard(
             if not interactive:
                 return _fail("could not write lpb-memory-config.json (permission?)")
 
-        # ── [6] Persist + verify ───────────────────────────────────────────
-        cons.info("[6] Persisting configuration")
+        # ── [6] MCP servers ───────────────────────────────────────────────
+        if configure_mcp(agent_dir, cons, interactive=interactive,
+                         step_label="[6] MCP servers"):
+            result.add("mcp", True, "configured")
+        else:
+            # MCP is optional — a missing mcp.json (e.g. offline boot without
+            # the config repo) must not fail the wizard.
+            result.add("mcp", False, "skipped (no mcp.json)")
+            result.warnings.append(
+                "mcp.json not found — MCP servers unavailable until the config "
+                "repo is in place (re-run 'lpb setup' or 'lpb-config render')")
+
+        # ── [7] Persist + verify ───────────────────────────────────────────
+        cons.info("[7] Persisting configuration")
         persisted = write_lemonade_auth(agent_dir, base, key, cons)
         if chosen:
             persisted = write_default_model(agent_dir, chosen, cons) and persisted
@@ -789,7 +886,23 @@ def doctor(agent_dir: str | Path, cons: Console, *, timeout: float = 5.0,
         cons.warn("  ⚠ lpb-memory       not configured — extension uses built-in defaults "
                   "(run 'lpb setup' or 'lpb-config memory setup')")
 
-    # [4] provider credentials
+    # [4] MCP servers (non-critical)
+    mcp = load_json_file(agent_dir / "mcp.json")
+    mcp_servers = (mcp or {}).get("mcpServers") or {}
+    if isinstance(mcp_servers, dict) and mcp_servers:
+        enabled = [n for n, s in mcp_servers.items()
+                   if isinstance(s, dict) and s.get("enabled") is not False]
+        disabled = [n for n, s in mcp_servers.items()
+                    if isinstance(s, dict) and s.get("enabled") is False]
+        line = f"  ✓ mcp.json         {', '.join(enabled) or 'none'} enabled"
+        if disabled:
+            line += f" · {', '.join(disabled)} disabled"
+        cons.info(line)
+    else:
+        cons.warn("  ⚠ mcp.json         not configured — MCP servers unavailable "
+                  "(run 'lpb setup' or 'lpb-config render')")
+
+    # [5] provider credentials
     creds = lemonade_creds(agent_dir)
     if creds is None:
         cons.error("  ✗ provider         no lemonade credentials — run 'lpb setup'")
@@ -800,7 +913,7 @@ def doctor(agent_dir: str | Path, cons: Console, *, timeout: float = 5.0,
     base, key = decode_creds(creds)
     cons.info(f"  ✓ provider         auth.json (server {base})")
 
-    # [5] live probe
+    # [6] live probe
     probe = probe_server(base, key, timeout=timeout)
     model = (settings or {}).get("defaultModel", "")
     if probe.ok:
@@ -832,5 +945,5 @@ __all__ = [
     "bare_base_url", "server_name", "load_json_file", "lemonade_creds",
     "decode_creds", "write_lemonade_auth", "write_default_model",
     "resolve_stack_version", "ensure_config_repo", "render_templates",
-    "probe_server", "configure_memory", "run_wizard", "quick_status", "doctor",
+    "probe_server", "configure_memory", "configure_mcp", "run_wizard", "quick_status", "doctor",
 ]

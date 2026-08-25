@@ -22,7 +22,8 @@ Usage:
 
 Template rendering:
   The config repo ships templates (settings.json.template,
-  lpb-memory-config.json.template); the rendered files are gitignored.
+  lpb-memory-config.json.template, mcp.json.template); the rendered files
+  are gitignored.
   start.sh generates them on first boot only (gated by ~/.pi/.initialized),
   so lpb-config re-renders after reset/update/merge and offers 'render'
   for on-demand regeneration. '--force' merges: user-added keys survive,
@@ -243,6 +244,10 @@ def _render_templates(agent_dir: str | Path, cons: Console, *, force: bool) -> N
     )
     _render_file(
         agent_dir, "lpb-memory-config.json.template", "lpb-memory-config.json", cons,
+        force=force, version=None, local_wins=True,
+    )
+    _render_file(
+        agent_dir, "mcp.json.template", "mcp.json", cons,
         force=force, version=None, local_wins=True,
     )
 

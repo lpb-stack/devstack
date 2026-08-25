@@ -77,6 +77,15 @@ def _make_agent_dir(tmpdir, *, with_repo=False, with_templates=True):
             {"reviewTransport": "subprocess", "memoryMode": "legacy-inject",
              "memoryCharLimit": 3000, "userCharLimit": 3000,
              "failureInjectionMaxEntries": 3}))
+        (agent / "mcp.json.template").write_text(json.dumps({
+            "settings": {"directTools": False, "idleTimeout": 0},
+            "mcpServers": {
+                "exa": {"command": "npx", "args": ["-y", "exa-mcp-server"],
+                        "env": {"EXA_API_KEY": "${EXA_API_KEY}"}},
+                "chrome-devtools": {"command": "chrome-devtools-mcp",
+                                    "args": ["--wsEndpoint", "ws://127.0.0.1:9222"],
+                                    "enabled": False},
+            }}, indent=2))
     (agent / "settings.json").write_text(json.dumps({"theme": "dark"}))
     if with_repo:
         subprocess.run(["git", "-C", str(agent), "init", "-q", "-b", "main"], check=True)
@@ -289,8 +298,9 @@ def test_wizard_interactive_full(tmpdir):
     _env_setup()
     # answers: URL (accept), key (accept), model pick 1,
     #          memory: mode (accept), transport (accept), bg model (accept),
-    #          limits: 4000, (accept), (accept)
-    answers = ["", "", "1", "", "", "", "4000", "", ""]
+    #          limits: 4000, (accept), (accept),
+    #          mcp: exa (accept), chrome-devtools (accept)
+    answers = ["", "", "1", "", "", "", "4000", "", "", "", ""]
     try:
         r = _run_interactive(answers, agent_dir=agent, cons=_quiet_console(),
                              config_remote="file:///nonexistent", config_ref="main")
@@ -302,6 +312,9 @@ def test_wizard_interactive_full(tmpdir):
     mem = json.loads((agent / "lpb-memory-config.json").read_text())
     assert mem["memoryCharLimit"] == 4000
     assert mem["llmModelOverride"] == "Qwen3.8-27B-GGUF"
+    mcp = json.loads((agent / "mcp.json").read_text())
+    assert mcp["mcpServers"]["exa"]["enabled"] is True            # kept, normalized
+    assert mcp["mcpServers"]["chrome-devtools"]["enabled"] is False
     print("  PASS\n")
 
 
@@ -313,8 +326,9 @@ def test_wizard_interactive_invalid_inputs_reprompt(tmpdir):
     _env_setup()
     # URL (accept), key (accept), model: 99/x invalid → 2,
     # memory: mode 9 invalid → accept, transport accept, bg model accept,
-    # limits: abc invalid → 4000, accept, accept
-    answers = ["", "", "99", "x", "2", "9", "", "", "", "abc", "4000", "", ""]
+    # limits: abc invalid → 4000, accept, accept,
+    # mcp: exa (accept), chrome-devtools (accept)
+    answers = ["", "", "99", "x", "2", "9", "", "", "", "abc", "4000", "", "", "", ""]
     try:
         r = _run_interactive(answers, agent_dir=agent, cons=_quiet_console(),
                              config_remote="file:///nonexistent", config_ref="main")
@@ -352,8 +366,9 @@ def test_wizard_interactive_anyway_unreachable(tmpdir):
     setup_mod._http_get_json = _http_down
     _env_setup()
     # answers: URL 'a' (anyway), model continue (accept),
-    #          memory: mode, transport, model, limits x3 (accepts)
-    answers = ["a", "", "", "", "", "", "", ""]
+    #          memory: mode, transport, model, limits x3 (accepts),
+    #          mcp: exa (accept), chrome-devtools (accept)
+    answers = ["a", "", "", "", "", "", "", "", "", ""]
     try:
         r = _run_interactive(answers, agent_dir=agent, cons=_quiet_console(),
                              config_remote="file:///nonexistent", config_ref="main")
@@ -416,6 +431,91 @@ def test_memory_prefills_current_values(tmpdir):
 
 
 # ─── quick_status / doctor ─────────────────────────────────────────────────
+
+def test_mcp_interactive_toggles(tmpdir):
+    """Per-server toggles: disable exa, enable chrome-devtools."""
+    agent = _make_agent_dir(tmpdir)
+    _write_mcp_runtime(agent)
+    orig_input = builtins.input
+    builtins.input = _TTY(["n", "y"])
+    try:
+        ok = setup_mod.configure_mcp(agent, _quiet_console(), interactive=True)
+    finally:
+        builtins.input = orig_input
+    assert ok
+    data = json.loads((agent / "mcp.json").read_text())
+    assert data["mcpServers"]["exa"]["enabled"] is False
+    assert data["mcpServers"]["chrome-devtools"]["enabled"] is True
+    print("  PASS\n")
+
+
+def test_mcp_interactive_invalid_then_keep(tmpdir):
+    agent = _make_agent_dir(tmpdir)
+    _write_mcp_runtime(agent)
+    orig_input = builtins.input
+    builtins.input = _TTY(["maybe", "", "n"])
+    try:
+        ok = setup_mod.configure_mcp(agent, _quiet_console(), interactive=True)
+    finally:
+        builtins.input = orig_input
+    assert ok
+    data = json.loads((agent / "mcp.json").read_text())
+    assert data["mcpServers"]["exa"]["enabled"] is True          # invalid → re-prompt, kept
+    assert data["mcpServers"]["chrome-devtools"]["enabled"] is False
+    print("  PASS\n")
+
+
+def test_mcp_abort_writes_nothing(tmpdir):
+    agent = _make_agent_dir(tmpdir)
+    before = _write_mcp_runtime(agent)
+    orig_input = builtins.input
+    builtins.input = _TTY(["q"])
+    try:
+        try:
+            setup_mod.configure_mcp(agent, _quiet_console(), interactive=True)
+            assert False, "expected AbortError"
+        except setup_mod.AbortError:
+            pass
+    finally:
+        builtins.input = orig_input
+    assert (agent / "mcp.json").read_text() == before            # untouched
+    print("  PASS\n")
+
+
+def test_mcp_noninteractive_keeps_defaults_no_prompt(tmpdir):
+    agent = _make_agent_dir(tmpdir)
+    _write_mcp_runtime(agent)
+    orig_input = builtins.input
+
+    def _no_input(prompt=""):
+        raise AssertionError("non-interactive configure_mcp must not prompt")
+    builtins.input = _no_input
+    try:
+        ok = setup_mod.configure_mcp(agent, _quiet_console(), interactive=False)
+    finally:
+        builtins.input = orig_input
+    assert ok
+    data = json.loads((agent / "mcp.json").read_text())
+    assert data["mcpServers"]["chrome-devtools"]["enabled"] is False  # defaults untouched
+    assert "enabled" not in data["mcpServers"]["exa"]               # no spurious rewrite
+    print("  PASS\n")
+
+
+def test_mcp_missing_file_skips(tmpdir):
+    agent = _make_agent_dir(tmpdir, with_templates=False)
+    cons, text = _capture_console()
+    ok = setup_mod.configure_mcp(agent, cons, interactive=False)
+    assert not ok
+    assert "mcp.json" in text() and "skipped" in text()
+    print("  PASS\n")
+
+
+def _write_mcp_runtime(agent) -> str:
+    """Render mcp.json from the fixture template; returns the text."""
+    text = (agent / "mcp.json.template").read_text()
+    (agent / "mcp.json").write_text(text)
+    return text
+
 
 def test_quick_status(tmpdir):
     agent = _make_agent_dir(tmpdir, with_repo=True)
@@ -524,6 +624,9 @@ def test_render_templates(tmpdir):
     assert ok
     settings = json.loads((agent / "settings.json").read_text())
     assert "__LPB_VERSION__" not in (agent / "settings.json").read_text()
+    # mcp.json is now rendered from its template too
+    mcp = json.loads((agent / "mcp.json").read_text())
+    assert "exa" in mcp["mcpServers"]
     # non-destructive: existing files are never overwritten
     (agent / "settings.json").write_text(json.dumps({"theme": "user"}))
     setup_mod.render_templates(agent, _quiet_console())
