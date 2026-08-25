@@ -2,7 +2,7 @@
 
 > **Last updated:** 2026-08-25
 > **Status:** Active — memory writes and reads working
-> **Extension:** pi-hermes-memory (subprocess transport, NPU model)
+> **Extension:** lpb-memory (subprocess transport, NPU model)
 
 ---
 
