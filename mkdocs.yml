@@ -61,7 +61,6 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Repo map: repo-map.md
-  - Stack versions: versions.md
   - Operations:
     - Subagent spawning: operations/subagent-spawning-pattern.md
   - "CLI & configuration":

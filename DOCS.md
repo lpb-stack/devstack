@@ -7,8 +7,8 @@ This branch carries the documentation site for the LocalPibox stack.
   on `dev` like any other content; this branch only needs a one-shot sync
   at release time (see below).
 - **`docs/` is derived** (gitignored) — `scripts/generate.py` copies the
-  tracked content and stamps version pages (repo map, versions) from the
-  6 stack repos. Run it before every build.
+  tracked content and stamps the repo map page (roles, branches, latest
+  tags) from the 6 stack repos. Run it before every build.
 - **Mermaid diagrams** (```mermaid fences, e.g. in `README.md`) are rendered
   client-side by the Material theme, which lazy-loads mermaid from the
   unpkg CDN on first visit — viewing diagrams needs internet access;
@@ -37,8 +37,10 @@ This branch carries the documentation site for the LocalPibox stack.
    on the `docs` branch and pushes it. Review first:
 
    ```bash
-   cd ~/.lpb-stack/docs-preview && mike serve    # http://localhost:8000
+   cd ~/.lpb-stack/docs-preview && python3 -m http.server 8000 -d site   # http://localhost:8000
    ```
+   (serves the local `mkdocs build` output — `mike serve` serves the
+   gh-pages branch, i.e. the last *deployed* content, not your build)
 
 3. `lpb-devstack release status` shows the docs verdict:
    - `READY` — `DOCS_READY` matches the release version and doc content
@@ -62,8 +64,8 @@ published; the first `0.0.X-lpb` stable release flips the site root.
 python3 -m pip install --user --break-system-packages "mkdocs-material==9.7.7" mike   # once
 git checkout docs && git pull
 python3 scripts/generate.py            # or: --tag 0.0.X-lpb
-mike serve                             # build + live preview at http://localhost:8000
-# (build check without the server: mkdocs build)
+mkdocs build
+python3 -m http.server 8000 -d site    # preview the local build at http://localhost:8000
 ```
 
 ## Fallback (manual mike cut)
