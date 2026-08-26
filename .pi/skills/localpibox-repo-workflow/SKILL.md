@@ -38,6 +38,11 @@ CI: VERSION changed in pushed commit → tests → build + publish → tag 5 rep
 
 - **devstack/VERSION** — the only VERSION file in the stack (e.g. `0.0.N-lpb-dev`)
 - **Format:** dev pipeline `0.x.y-lpb-dev`, main pipeline `0.x.y-lpb`
+- **`lpb-devstack bump`** is the **dev release trigger**: before committing a
+  VERSION change it gates on all 5 stack repos being on their dev branch,
+  fully pushed, and committed (CI tags the *remote* dev heads — unpushed or
+  uncommitted local work would ship invisibly). `bump --force` bypasses.
+  The docs gate is main-pipeline only (`release promote`).
 - **`lpb-devstack bump`** preserves major.minor, increments patch (or
   `--minor` / `--major` / `--set`), keeps the current suffix, and commits
   (`--push` also pushes, triggering CI)
@@ -182,7 +187,9 @@ Docs readiness verdicts (`release status`, checked by `promote`):
 
 ```bash
 # Work happens on dev as usual — CI runs tests on every push (no build).
-# When ready to ship:
+# When ready to ship: first push/commit any pending work in the other
+# 5 repos — bump refuses (dev release gate) until they're all on their
+# dev branch, pushed, and committed.
 lpb-devstack bump                # current VERSION patch+1 (+ commit)
 git push origin dev              # CI sees VERSION change → build + tag
 # Or one step (commit + push):
