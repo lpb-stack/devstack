@@ -113,7 +113,8 @@ Two image flavours are published to `ghcr.io/lpb-stack/devstack`:
 - **`…-web`** — extends `-cli` with the VSCodium server
 
 CI tags images per pipeline: `:0.0.x-lpb[-dev]-cli/web` (versioned),
-`:dev-cli/web`, `:main-cli/web`, `:latest-cli/web`, `:{sha}-cli/web`.
+`:dev-cli/web`, `:main-cli/web`, `:latest-cli/web`, `:weekly-cli/web`,
+`:{sha}-cli/web`.
 
 > ⚠️ There is **no bare `:cli`, `:web`, or `:latest` tag** — pulling one
 > fails with `manifest unknown`. `lpb` always resolves a real tag for you,
@@ -198,7 +199,7 @@ merges, so the delta vs upstream can always be extracted as one patch.
 
 | Repo | Upstream | LocalPibox work | Update policy |
 |---|---|---|---|
-| **pi** | `earendil-works/pi` (v0.84.2) | Qwen `reasoning_effort` + context-overflow patches | rebase onto new upstream releases |
+| **pi** | `earendil-works/pi` (v0.84.3) | Qwen `reasoning_effort` + context-overflow patches | rebase onto new upstream releases |
 | **lemonade-pi-plugin** | `lemonade-sdk/lemonade-pi-plugin` (no stable release) | Qwen thinking + vision support | follow upstream `main`, check periodically |
 | **pi-subagents** | `tintinweb/pi-subagents` (v0.16.1) | centralized local-first subagent model registry | follow upstream; merge + repair as needed |
 | **lpb-memory** | *(independent project)* | Pi memory extension (subprocess reviews) | no upstream to track |

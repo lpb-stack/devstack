@@ -78,8 +78,8 @@ promoting:
    `cd ~/.lpb-stack/docs-preview && mike serve`) commits
    `DOCS_READY=<stable-version>` on the `docs` branch and pushes it
 2. `release status` shows the docs verdict: `READY` / `MISSING` /
-   `STALE` (stale = flag for another version, or doc content changed on dev
-   after flagging)
+   `WRONG-VERSION` (flag for another version) / `STALE` (doc content changed
+   on dev after flagging)
 3. `release promote` **refuses** unless docs are `READY` for the version
    being released — `--force` overrides with a warning
 4. The main pipeline re-verifies the flag, then publishes the immutable
@@ -100,7 +100,7 @@ lemonade-pi-plugin):
   guidance — delete the local branch (`git branch -D <stable>`, only with
   explicit confirmation) and re-run
 - **devstack only**: strips the `-dev` VERSION suffix (e.g.
-  `0.0.58-lpb-dev` → `0.0.58-lpb`) and commits it
+  `0.0.N-lpb-dev` → `0.0.N-lpb`) and commits it
 
 Flags: `--yes` (skip confirmation), `--dry-run` (plan only), `--rebase`
 (first-release mode), `--force` (promote even if docs are not flagged

@@ -19,7 +19,6 @@ boot by `start.sh`.
 ├── mcp.json                  → runtime MCP config (NOT git-tracked; wizard step 6 toggles servers)
 ├── .env.example              → template for bare-name env vars (EXA_API_KEY, …)
 ├── install.sh                → host install helper
-├── VERSION                   → config repo version
 ├── skills/
 │   ├── agent-browser-mcp-integration/
 │   ├── browser-validation/

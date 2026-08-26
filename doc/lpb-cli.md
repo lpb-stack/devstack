@@ -14,8 +14,9 @@ Installs (no sudo required) into `~/.local/bin`:
 
 - `lpb` — bash wrapper
 - `lpb.py` — Python engine
-- `lpb-config`, `lpb-devstack` + the shared `localpibox` package
-  (the setup wizard behind `lpb setup` / `lpb doctor`)
+- `lpb-config`, `lpb-devstack`
+- the shared `localpibox` package (the setup wizard behind `lpb setup` /
+  `lpb doctor`) — installed to `~/.lpb-stack/devstack/localpibox/`
 
 …and copies the stack config files (`lpb.stack.env`, `lpb.conf.env`,
 `VERSION`) to `~/.lpb-stack/devstack/`. Make sure `~/.local/bin` is on your
@@ -160,7 +161,7 @@ Two image flavours are published to `ghcr.io/lpb-stack/devstack`:
    publish them, so pulling them always fails with `manifest unknown`.
 
 Tags CI publishes: `:{v}-cli/web`, `:dev-cli/web`, `:main-cli/web`,
-`:latest-cli/web`, `:{sha}-cli/web`.
+`:latest-cli/web`, `:weekly-cli/web`, `:{sha}-cli/web`.
 
 ### Resolution example
 
