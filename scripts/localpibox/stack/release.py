@@ -716,9 +716,9 @@ def cmd_release_docs_ready(*, assume_yes: bool, cons: Console) -> int:
                    "python3 -m pip install --user --break-system-packages "
                    "'mkdocs-material==9.7.7' mike")
         return 1
-    cons.info("Site built — note: repo-map/versions pages are re-stamped by "
+    cons.info("Site built — note: the repo map page is re-stamped by "
               "CI after the release tags exist.")
-    cons.info(f"  preview:  cd {work} && mike serve   # http://localhost:8000")
+    cons.info(f"  preview:  cd {work} && python3 -m http.server 8000 -d site")
     if not assume_yes and not confirm(
             f"Review the site, then flag docs as ready for {target}?"):
         cons.info("Aborted — docs branch not flagged. Re-run when ready.")
