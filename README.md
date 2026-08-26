@@ -2,12 +2,16 @@
 
 A local-first AI development environment in a single container: the
 **Pi** coding agent, **VSCodium** editor, and **agent-browser** automation —
-powered by a Qwen model served locally through **Lemonade**. No cloud LLM
-required; your code and data stay on your machine.
+optimized for Qwen models served locally through **Lemonade**, targeting
+AMD Strix Halo hardware. No cloud LLM required; your code and data stay
+on your machine.
 
 ## Quick Start
 
 ### 1. Install the launcher (once)
+
+Prerequisite: a Linux host with **Python 3** and **Podman** or **Docker**
+(the launcher uses whichever container runtime it finds, podman first).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lpb-stack/devstack/main/scripts/install.sh | bash
@@ -20,8 +24,9 @@ Installs `lpb` + `lpb.py` to `~/.local/bin` (no sudo needed — make sure
 ### 2. Run it
 
 ```bash
-lpb /path/to/your/project      # Pi CLI session (foreground) in the container
+lpb /path/to/your/project      # default: Pi CLI session (foreground)
 lpb --web /path/to/your/project  # VSCodium editor (background, prints a URL)
+lpb --ssh /path/to/your/project  # sshd in the container for remote login
 lpb                              # resumes your last project (or ~)
 ```
 
@@ -65,12 +70,12 @@ lpb --help       # full usage
 |---|---|
 | **Pi** (forked) | Coding agent CLI — local fork with Qwen reasoning + context-overflow patches |
 | **VSCodium** | Web-based editor (`:web` image), connects over the OpenVSCode protocol |
-| **lemonade-pi-plugin** (forked) | Qwen model provider — talks to the local Lemonade server |
+| **lemonade-pi-plugin** (forked) | Model provider for the local **Lemonade** server — Qwen thinking + vision support |
 | **lpb-memory** | Persistent memory + session search for the agent |
 | **pi-subagents** (forked) | Local-first subagent model registry (no hardcoded cloud models) |
 | **agent-browser** + Chrome | Browser automation tools for the agent |
 | **MCP servers** | Exa (web search), Context7 (library docs), agent-browser |
-| **Lemonade** (on host) | Local model server at `127.0.0.1:13305` (Qwen3.6-35B by default) |
+| **Lemonade** (host prerequisite) | Local model server — AMD/Strix Halo-optimized, serves GGUF models; on this host or any reachable host; model chosen by the user at setup (no default) |
 
 ## How It Works
 
