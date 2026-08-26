@@ -7,8 +7,10 @@ catch the historic regressions.
 Part of the lpb.py test suite (entry point: test_lpb.py)."""
 from __future__ import annotations
 
+import io
 import os
 import builtins
+import sys
 import tempfile
 import time
 from pathlib import Path
@@ -192,51 +194,138 @@ def test_resolve_path_host_semantics():
     print("  PASS\n")
 
 
-def test_cmd_remove_with_dirs():
-    """--remove must delete state+browser dirs after confirmation (Path.is_dir path).
+def test_cmd_remove_all_yes():
+    """--remove all --yes must delete state+browser dirs and the container.
 
-    Regression guard: resolve_path() returns str, but cmd_remove called
-    d.is_dir() directly → AttributeError. Also verifies the interactive
-    confirmation ('y') path.
+    Regression guard (Path semantics): resolve_path() returns str; the section
+    helpers must wrap it in Path before .is_dir() (historic AttributeError).
     """
-    print("TEST: --remove deletes state/browser dirs (y)")
+    print("TEST: --remove all --yes (full clean)")
     reset_mock()
     with tempfile.TemporaryDirectory() as td:
         state = os.path.join(td, "state")
         browser = os.path.join(td, "browser")
         os.makedirs(state)
         os.makedirs(browser)
-        with open(os.path.join(state, "keep.txt"), "w") as f:
+        os.makedirs(os.path.join(state, "agent"))
+        with open(os.path.join(state, "agent", "x"), "w") as f:
             f.write("x")
+        os.makedirs(os.path.join(state, "gh-config"))
         MOCK_STATE["exists"] = True
         mod = make_module()
-        mod.parse_cli(["--remove"])
+        mod.parse_cli(["--remove", "all", "--yes"])
         mod.apply_overrides()
         mod.cfg.state_dir = state
         mod.cfg.browser_dir = browser
-        orig_input = builtins.input
-        builtins.input = lambda prompt="": "y"
-        try:
-            with _OutputCapture():
-                mod.cmd_remove()
-        finally:
-            builtins.input = orig_input
+        with _OutputCapture():
+            mod.cmd_remove()
         assert not MOCK_STATE["exists"], "container should be removed"
         assert not os.path.exists(state), f"state dir not removed: {state}"
         assert not os.path.exists(browser), f"browser dir not removed: {browser}"
     print("  PASS\n")
 
 
+def test_cmd_remove_section_pi():
+    """--remove pi keeps gh auth (gh-config/) and agent-browser state.
+
+    The user's wizard-retest scenario: wipe pi config + init only; next boot
+    re-clones the config repo and re-runs the setup preflight.
+    """
+    print("TEST: --remove pi keeps gh-config + browser")
+    reset_mock()
+    with tempfile.TemporaryDirectory() as td:
+        state = os.path.join(td, "state")
+        browser = os.path.join(td, "browser")
+        os.makedirs(os.path.join(state, "agent"))
+        with open(os.path.join(state, "agent", "settings.json"), "w") as f:
+            f.write("{}")
+        os.makedirs(os.path.join(state, "ssh-host-keys"))
+        with open(os.path.join(state, ".initialized"), "w") as f:
+            f.write("")
+        os.makedirs(os.path.join(state, "gh-config"))
+        with open(os.path.join(state, "gh-config", "hosts.yml"), "w") as f:
+            f.write("token: keep-me")
+        os.makedirs(os.path.join(browser, "profile"))
+        MOCK_STATE["exists"] = True
+        mod = make_module()
+        mod.parse_cli(["--remove", "pi", "--yes"])
+        mod.apply_overrides()
+        mod.cfg.state_dir = state
+        mod.cfg.browser_dir = browser
+        with _OutputCapture():
+            mod.cmd_remove()
+        assert not os.path.exists(os.path.join(state, "agent")), "agent/ must be removed"
+        assert not os.path.exists(os.path.join(state, ".initialized")), ".initialized must be removed"
+        assert not os.path.exists(os.path.join(state, "ssh-host-keys")), "ssh-host-keys must be removed"
+        assert os.path.isfile(os.path.join(state, "gh-config", "hosts.yml")), "gh auth must survive"
+        assert os.path.exists(browser), "browser dir must survive"
+        assert MOCK_STATE["exists"], "container must survive a pi-only remove"
+    print("  PASS\n")
+
+
+def test_cmd_remove_interactive_menu():
+    """TTY menu: a single selection prompt; 'pi' removes only the pi section."""
+    print("TEST: --remove interactive menu selects sections")
+    reset_mock()
+    with tempfile.TemporaryDirectory() as td:
+        state = os.path.join(td, "state")
+        browser = os.path.join(td, "browser")
+        os.makedirs(os.path.join(state, "agent"))
+        os.makedirs(os.path.join(state, "gh-config"))
+        os.makedirs(browser)
+        MOCK_STATE["exists"] = True
+        mod = make_module()
+        mod.parse_cli(["--remove"])
+        mod.apply_overrides()
+        mod.cfg.state_dir = state
+        mod.cfg.browser_dir = browser
+        answers = iter(["pi", "y"])  # menu selection, then confirm
+        orig_input, orig_stdin = builtins.input, sys.stdin
+
+        class _TTYStdin(io.StringIO):
+            def isatty(self):
+                return True
+
+        builtins.input = lambda prompt="": next(answers)
+        sys.stdin = _TTYStdin()
+        try:
+            with _OutputCapture():
+                mod.cmd_remove()
+        finally:
+            builtins.input, sys.stdin = orig_input, orig_stdin
+        assert not os.path.exists(os.path.join(state, "agent")), "pi section should be removed"
+        assert os.path.exists(os.path.join(state, "gh-config")), "gh section must survive"
+        assert os.path.exists(browser), "browser section must survive"
+        assert MOCK_STATE["exists"], "container must survive a pi-only remove"
+    print("  PASS\n")
+
+
+def test_cmd_remove_unknown_section():
+    """--remove <bogus> must error with the valid section list."""
+    print("TEST: --remove bogus section → error")
+    reset_mock()
+    mod = make_module()
+    mod.parse_cli(["--remove", "bogus"])
+    mod.apply_overrides()
+    with _OutputCapture():
+        try:
+            mod.cmd_remove()
+            assert False, "unknown section must error"
+        except mod.DevstackError:
+            pass
+    print("  PASS\n")
+
+
 def test_cmd_remove_abort():
-    """--remove with 'n' answer must NOT delete anything."""
+    """--remove with 'n' at the confirm must NOT delete anything (incl. container)."""
     print("TEST: --remove aborts on 'n'")
     reset_mock()
     with tempfile.TemporaryDirectory() as td:
         state = os.path.join(td, "state")
-        os.makedirs(state)
+        os.makedirs(os.path.join(state, "agent"))
         MOCK_STATE["exists"] = True
         mod = make_module()
-        mod.parse_cli(["--remove"])
+        mod.parse_cli(["--remove", "pi"])
         mod.apply_overrides()
         mod.cfg.state_dir = state
         mod.cfg.browser_dir = os.path.join(td, "browser")
@@ -247,8 +336,8 @@ def test_cmd_remove_abort():
                 mod.cmd_remove()
         finally:
             builtins.input = orig_input
-        assert os.path.exists(state), "state dir must survive an aborted remove"
-        assert not MOCK_STATE["exists"], "container removed even on abort (ok-ish, but should be removed)"
+        assert os.path.exists(os.path.join(state, "agent")), "state must survive an aborted remove"
+        assert MOCK_STATE["exists"], "container must survive an aborted remove"
     print("  PASS\n")
 
 
@@ -343,11 +432,12 @@ _REG_MUTATIONS = {
         "# ── Self-update (lpb --update) ───────────────────────────────────────────────────def self_update() -> None:",
         ["missing/not-callable"],
     ),
-    # real regression: resolve_path() returns str, cmd_remove called d.is_dir() → AttributeError
+    # real regression: resolve_path() returns str, section helper called .is_dir()
+    # on the raw str → AttributeError
     "str_is_dir": (
-        "    dir_browser = Path(resolve_path(cfg.browser_dir))\n    for d in (Path(resolve_path(cfg.state_dir)), dir_browser):\n        if d.is_dir():",
-        "    dir_browser = Path(resolve_path(cfg.browser_dir))\n    for d in (resolve_path(cfg.state_dir), dir_browser):\n        if d.is_dir():",
-        ["Argument of type 'str' cannot be used with 'is_dir'"],
+        "    state = Path(resolve_path(cfg.state_dir))\n    browser = Path(resolve_path(cfg.browser_dir))\n",
+        "    state = resolve_path(cfg.state_dir)\n    browser = Path(resolve_path(cfg.browser_dir))\n",
+        ["'str' object has no attribute 'is_dir'"],
     ),
 }
 
@@ -378,7 +468,7 @@ def test_regression_guards_on_swallowed_def():
 
 
 def test_regression_guards_on_str_is_dir():
-    """Sanity: cmd_remove Must fail with AttributeError on str.is_dir mutation."""
+    """Sanity: --remove must fail with AttributeError on the str.is_dir mutation."""
     print("TEST: mutation 'str_is_dir' triggers AttributeError on --remove")
     reset_mock()
     path = _mutate_lpb("str_is_dir")
@@ -387,20 +477,16 @@ def test_regression_guards_on_str_is_dir():
         state = os.path.join(td, "state")
         os.makedirs(state)
         MOCK_STATE["exists"] = True
-        mod.parse_cli(["--remove"])
+        mod.parse_cli(["--remove", "all", "--yes"])
         mod.apply_overrides()
         mod.cfg.state_dir = state
         mod.cfg.browser_dir = os.path.join(td, "browser")
-        orig_input = builtins.input
-        builtins.input = lambda prompt="": "y"
         try:
-            try:
+            with _OutputCapture():
                 mod.cmd_remove()
-                msg = "cmd_remove did not raise on str.is_dir() mutation"
-            except AttributeError:
-                msg = None
-        finally:
-            builtins.input = orig_input
+            msg = "cmd_remove did not raise on str.is_dir() mutation"
+        except AttributeError:
+            msg = None
     if msg:
         assert False, msg
     print("  PASS (bug reproduced; cmd_remove raises AttributeError)\n")
@@ -415,7 +501,10 @@ TESTS = [
     test_parse_env_file,
     test_parse_env_file_placeholder_expansion,
     test_resolve_path_host_semantics,
-    test_cmd_remove_with_dirs,
+    test_cmd_remove_all_yes,
+    test_cmd_remove_section_pi,
+    test_cmd_remove_interactive_menu,
+    test_cmd_remove_unknown_section,
     test_cmd_remove_abort,
     test_cmd_update_runs,
     test_cmd_run_env_vars,

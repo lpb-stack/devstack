@@ -1,6 +1,6 @@
 # LocalPibox Fork Improvements
 
-> Last updated: 2026-08-18
+> Last updated: 2026-08-26
 > Status: Qwen3.6 reasoning + vision fully operational
 
 ---
@@ -23,7 +23,7 @@ repos and their upstream origins:
 
 ### Upstream Baseline
 
-**Based on:** `earendil-works/pi` v0.84.2 (merged into `lpb-dev` branch)
+**Based on:** `earendil-works/pi` v0.84.3 (merged into `lpb-dev` branch)
 
 The original upstream repo is a **TypeScript monorepo** with 11 packages:
 
@@ -42,9 +42,9 @@ The original upstream repo is a **TypeScript monorepo** with 11 packages:
 
 For chat/workflows, see the companion project: [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
 
-### Fork Patches (on top of v0.84.2)
+### Fork Patches (original set, introduced on v0.84.1/v0.84.2)
 
-The fork adds **6 lbp-specific commits** on top of the v0.84.2 merge:
+The fork adds **6 lbp-specific commits** on top of the upstream merge:
 
 | Commit | What changed | Purpose |
 |---|---|---|
@@ -54,6 +54,10 @@ The fork adds **6 lbp-specific commits** on top of the v0.84.2 merge:
 | `346947d` | `hooks`: sync to latest (validation-only, skip when not in devstack) | Hook management |
 | `8449290` | `chore`: install husky pre-commit hook, remove stale githooks wrapper | Dev tooling |
 | `3fc4978` | `Merge tag 'v0.84.2' into lbp-dev` | Upstream merge |
+
+Since the v0.84.3 merge (`13c6d72`): **2 additional commits** —
+`3c307d0` (fix: cloudflare gateway type, include workers) and
+`6db652e` (style: numeric literal normalization in overflow.ts, biome).
 
 The **critical commit** (`53c1dc2`) adds these surgical changes:
 
@@ -146,7 +150,7 @@ model source of truth:
 **Model resolution chain (after patch):**
 1. Explicit `model` param in `Agent()` call
 2. `model` field in agent `.md` frontmatter
-3. **`globalDefaultModel`** from `pi-defaults.json` / `subagents.json`
+3. **`globalDefaultModel`** from `pi-defaults.json`
 4. Parent session model (inherit)
 
 **Configuration for local-first:**
@@ -224,11 +228,15 @@ per-call. Cannot point at local Lemonade server. Not usable with this stack.
 
 ### Support Files
 
+Paths match the Dockerfile `COPY` lines (source of truth):
+
 | Path | Purpose |
 |---|---|
-| `/opt/pi-support/bin/session-uuid` | Generate unique session IDs |
-| `/opt/pi-support/bin/browser-state-cleanup` | Cleanup browser state volumes |
+| `/opt/devstack/install-browser.py` | Install Chrome-for-Testing + agent-browser |
+| `/opt/devstack/validate.py` | Stack validation helper |
+| `/opt/pi-support/browser-state-cleanup.py` | Cleanup browser state volumes |
 | `/opt/pi-support/browser-validate.ts` | Browser validation entry point |
-| `/opt/pi-support/start.sh` | Start script |
+| `/opt/pi-support/install-openspec.py` | Bootstrap OpenSpec in a project |
+| `/opt/devstack/start.sh` | Container start script |
 | `/opt/pi-support/config/agent-browser-action-policy.json` | Agent action policies |
 | `/opt/pi-support/validate-subagent-output.ts` | Subagent output validation |

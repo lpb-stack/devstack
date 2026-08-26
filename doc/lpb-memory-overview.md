@@ -22,7 +22,7 @@ session model (so nothing extra to configure), or a small dedicated model
 ## Architecture
 
 ```
-Main Session (Qwen3.6-35B)
+Main Session (main model)
   │
   ├─ AI calls memory_search → SQLite FTS5 search
   │

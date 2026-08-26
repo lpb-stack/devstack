@@ -4,6 +4,13 @@ description: Manage the 6 LocalPibox repos — manual versioning (lpb-devstack b
 ---
 # LocalPibox Repository Workflow
 
+**Reference documentation, not a task list.** This skill is loaded as
+project context so you know how the stack works — loading it is NOT a
+request to ship anything. Only run `bump` / `release status` / `promote` /
+`docs-ready` commands when the user explicitly asks for a release. All
+version numbers in this file are illustrative placeholders (`0.0.N`); the
+actual current version always comes from `devstack/VERSION`.
+
 Versioning model: **single-source** (devstack/VERSION), **manual tagging**.
 The developer bumps the version with `lpb-devstack bump` (commit + push).
 CI builds and tags **only when VERSION changed in the pushed commit** —
@@ -29,8 +36,13 @@ Developer: lpb-devstack bump → commit → push (the release trigger)
 CI: VERSION changed in pushed commit → tests → build + publish → tag 5 repos
 ```
 
-- **devstack/VERSION** — the only VERSION file in the stack (e.g. `0.0.57-lpb-dev`)
+- **devstack/VERSION** — the only VERSION file in the stack (e.g. `0.0.N-lpb-dev`)
 - **Format:** dev pipeline `0.x.y-lpb-dev`, main pipeline `0.x.y-lpb`
+- **`lpb-devstack bump`** is the **dev release trigger**: before committing a
+  VERSION change it gates on all 5 stack repos being on their dev branch,
+  fully pushed, and committed (CI tags the *remote* dev heads — unpushed or
+  uncommitted local work would ship invisibly). `bump --force` bypasses.
+  The docs gate is main-pipeline only (`release promote`).
 - **`lpb-devstack bump`** preserves major.minor, increments patch (or
   `--minor` / `--major` / `--set`), keeps the current suffix, and commits
   (`--push` also pushes, triggering CI)
@@ -145,7 +157,7 @@ What promote does per repo:
   guidance — delete the local branch (`git branch -D <stable>`, only with
   explicit user confirmation) and re-run
 - **devstack only:** strips the `-dev` VERSION suffix on `main` and commits
-  it (e.g. `0.0.58-lpb-dev` → `0.0.58-lpb`)
+  it (e.g. `0.0.N-lpb-dev` → `0.0.N-lpb`)
 
 After promote, CI (main pipeline) finishes the release — the VERSION change
 on `main` is the trigger:
@@ -154,7 +166,7 @@ on `main` is the trigger:
 
 Then align the runtime to the stable pipeline:
 ```bash
-lpb-devstack --tag main workspace sync --extensions   # pins → stable tag
+lpb-config --tag main sync-pins   # pins → stable version
 pi update --extensions
 lpb-devstack --tag main validate
 ```
@@ -175,8 +187,10 @@ Docs readiness verdicts (`release status`, checked by `promote`):
 
 ```bash
 # Work happens on dev as usual — CI runs tests on every push (no build).
-# When ready to ship:
-lpb-devstack bump                # 0.0.57-lpb-dev → 0.0.58-lpb-dev (+ commit)
+# When ready to ship: first push/commit any pending work in the other
+# 5 repos — bump refuses (dev release gate) until they're all on their
+# dev branch, pushed, and committed.
+lpb-devstack bump                # current VERSION patch+1 (+ commit)
 git push origin dev              # CI sees VERSION change → build + tag
 # Or one step (commit + push):
 lpb-devstack bump --push
@@ -199,6 +213,8 @@ push. `bump` (without `--push`) warns about this.
 lpb-config status | update | reset [--force] | merge   # config repo
 lpb-config render [--force]                             # regen runtime config from templates
 lpb-config align                                        # pins → latest GitHub tags
+lpb-config sync-pins [--tag dev|main]                   # pins → pipeline's stack VERSION
+lpb-config setup                                        # first-run setup wizard
 lpb-config memory show | setup                          # lpb-memory config
 ```
 
@@ -216,7 +232,7 @@ local keys win in the memory config).
 ```bash
 lpb-devstack bump [--minor|--major] [--set V] [--no-commit] [--push]
 lpb-devstack tag-repos [--branch dev|main] [--version V] [--dry-run]
-lpb-devstack workspace status | sync [--extensions] | ensure [--fix]
+lpb-devstack workspace status | sync
 lpb-devstack validate
 lpb-devstack release status | docs-ready | promote [--yes] [--dry-run] [--rebase] [--force]
 lpb-devstack validate-hooks     # full pre-commit checks (tests included)
@@ -239,12 +255,13 @@ Both tools are thin CLIs over the shared `scripts/localpibox/stack/` library
    merge) — this is the recovery path when the rendered file is lost or
    its pins are stale after a stack version move
 4. No model/provider preconfigured — user runs `/login lemonade`
-5. Pin sync: `lpb-devstack workspace sync --extensions`
+5. Pin sync: `lpb-config sync-pins`
    (main pipeline reads the stable version from devstack `origin/main`)
 6. `lpb-devstack validate` checks pins match the current stack version
 7. Persistent on the host volume — survives container rebuilds
 
-Pins look like: `git:github.com/lpb-stack/pi-subagents@0.0.57-lpb-dev`
+Pins look like: `git:github.com/lpb-stack/pi-subagents@<VERSION>`
+(e.g. `...pi-subagents@0.0.N-lpb-dev`)
 
 ## lpb-memory Config Lifecycle
 

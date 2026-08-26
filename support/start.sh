@@ -26,6 +26,25 @@ info()  { echo "[INFO]  $*"; }
 warn()  { echo "[WARN]  $*" >&2; }
 debug() { [[ "${DEBUG:-}" != "true" ]] || echo "[DEBUG] $*"; }
 
+# ─── Provider-credential check (shared by first-run + every-boot) ─────────
+# True when auth.json carries a usable lemonade entry (same candidate order
+# as the plugin's readStoredPayload). Used to decide whether the in-container
+# non-interactive setup fallback must run.
+_has_lemonade_creds() {
+    local agent_dir="${1:-${HOME_DIR}/.pi/agent}"
+    [[ -f "${agent_dir}/auth.json" ]] || return 1
+    AUTH_JSON="${agent_dir}/auth.json" python3 -c '
+import json, os, sys
+try:
+    d = json.load(open(os.environ["AUTH_JSON"]))
+except Exception:
+    sys.exit(1)
+e = d.get("lemonade") or (d.get("providers") or {}).get("lemonade") \
+    or (d.get("oauth") or {}).get("lemonade")
+sys.exit(0 if isinstance(e, dict) and e.get("refresh") else 1)
+'
+}
+
 # ─── 1. PARSE COMMAND-LINE ARGUMENTS ───────────────────────────────────────
 MODE=""
 EXTRA_ARGS=()
@@ -346,47 +365,34 @@ if [[ "$FIRST_RUN" = "true" ]]; then
     printf 'allow-scripts=better-sqlite3\nallow-scripts=agent-browser\nallow-scripts=esbuild\nallow-scripts=protobufjs\nallow-scripts=@google/genai\n' > "${AGENT_DIR}/git/.npmrc" 2>/dev/null || true
     printf 'allow-scripts=better-sqlite3\nallow-scripts=agent-browser\nallow-scripts=esbuild\nallow-scripts=protobufjs\nallow-scripts=@google/genai\n' > "${HOME_DIR}/.npmrc" 2>/dev/null || true
 
-    # ── Generate settings.json from template (first boot only) ───────
-    # Template is in the config repo; generated file is persisted on host volume.
-    # No model/provider — user will configure via /login after first boot.
-    _lpb_version="${LPB_VERSION:-0.0.0-lpb}"
-    _settings_template="${AGENT_DIR}/settings.json.template"
-    _settings_file="${AGENT_DIR}/settings.json"
-    if [[ -f "${_settings_template}" && ! -f "${_settings_file}" ]]; then
-        info "Generating settings.json from template..."
-        # Replace __LPB_VERSION__ placeholder with actual version
-        sed "s/__LPB_VERSION__/${_lpb_version}/g" "${_settings_template}" > "${_settings_file}"
-        info "  settings.json generated (version: ${_lpb_version})"
-        info "  No model configured — run '/login lemonade' to set your model"
-    elif [[ ! -f "${_settings_template}" ]]; then
-        warn "settings.json.template not found — Pi will use defaults"
-    fi
-
-    # ── First-run setup: lemonade provider + default model + memory ─────
-    # Interactive when a TTY is attached (cli / --shell); non-interactive
-    # otherwise (web mode, cron). Best-effort: a failure never blocks
-    # startup — re-run 'lpb-config setup [--reconfigure]' any time.
+    # ── Runtime config: render templates + provider setup ─────────────
+    # The HOST launcher runs the interactive setup wizard before the first
+    # start (lpb setup — all modes), writing directly into this agent dir.
+    # This in-container path is the FALLBACK for boots where the host
+    # wizard did not run (legacy hosts, manual starts, CI): render runtime
+    # config from templates, and — only when the provider is still
+    # unconfigured and a server URL is available — run the non-interactive
+    # wizard. A failure is reported prominently (not swallowed): re-run
+    # 'lpb setup' on the host, or 'lpb-config setup' in a shell.
     if command -v lpb-config >/dev/null 2>&1; then
-        if [[ -t 0 ]]; then
-            info "Running first-run setup (provider, model, memory)..."
-            lpb-config setup || warn "First-run setup failed — run 'lpb-config setup' in a terminal"
+        lpb-config render || warn "lpb-config render failed — Pi will use defaults"
+        if _has_lemonade_creds "${AGENT_DIR}"; then
+            debug "Lemonade provider already configured (host wizard or prior setup)"
+        elif [[ -n "${LEMONADE_BASE_URL:-}" ]]; then
+            info "Lemonade provider not configured — running non-interactive setup..."
+            if lpb-config setup --non-interactive; then
+                info "  Lemonade provider configured."
+            else
+                warn "────────────────────────────────────────────────────────" >&2
+                warn " Lemonade provider setup FAILED — model not configured" >&2
+                warn " Fix it with 'lpb setup' on the host, or open a shell" >&2
+                warn " (lpb --shell / ssh in) and run 'lpb-config setup'." >&2
+                warn "────────────────────────────────────────────────────────" >&2
+            fi
         else
-            lpb-config setup --non-interactive || \
-                info "Non-interactive setup incomplete (server unreachable?) — run 'lpb-config setup' in a terminal"
+            warn "No Lemonade provider configured (no LEMONADE_BASE_URL set)."
+            warn "Run 'lpb setup' on the host, or 'lpb-config setup' in a shell."
         fi
-    fi
-
-    # ── Generate lpb-memory config from template (first boot only) ──
-    # No llmModelOverride — uses main model until user configures provider.
-    _memory_template="${AGENT_DIR}/lpb-memory-config.json.template"
-    _memory_file="${AGENT_DIR}/lpb-memory-config.json"
-    if [[ -f "${_memory_template}" && ! -f "${_memory_file}" ]]; then
-        info "Generating lpb-memory-config.json from template..."
-        cp "${_memory_template}" "${_memory_file}"
-        info "  lpb-memory config generated (uses main model by default)"
-        info "  Run 'lpb-config memory setup' to configure after /login lemonade"
-    elif [[ ! -f "${_memory_template}" ]]; then
-        warn "lpb-memory-config.json.template not found — extension uses defaults"
     fi
 
     # ── GHCR login for image pulls ────────────────────────────────────
@@ -407,6 +413,14 @@ if [[ "$FIRST_RUN" = "true" ]]; then
     _unlock_account "$(stat -c %U "${HOME_DIR}" 2>/dev/null || echo "lpb")" "sudo -n" info
 
     info "First run bootstrap complete."
+fi
+
+# ─── 4a2. PERSISTENT PROVIDER REMINDER (EVERY BOOT) ─────────────────────────
+# The in-container logs are the only feedback channel in detached modes
+# (--ssh / --web), so a missing provider must be loud there, not a log
+# line nobody reads once. Every boot until the provider is configured.
+if ! _has_lemonade_creds "${AGENT_DIR}"; then
+    warn "Model provider NOT configured — run 'lpb setup' on the host (or 'lpb-config setup' here)."
 fi
 
 # ─── 4b. ENSURE HOME MOUNT PARENTS ARE WRITABLE (EVERY BOOT) ────────────────
@@ -616,12 +630,63 @@ EOF
             _unlock_account "${_ssh_owner}" "${SUDO}" info
 
             info "Starting sshd on port ${LPB_SSH_PORT:-2222}..."
-            # Run sshd in the foreground in the background; it requires root for
-            # privilege separation, so use sudo when available.
+            # Run sshd in FOREGROUND mode (-D) in the background, capturing
+            # its output to a log file. Daemon mode is a black hole: when it
+            # cannot bind the port (or fails any other way) it exits 0 and
+            # writes the error to syslog — which does not exist in this
+            # container — so the failure is invisible and the cause is lost.
+            # -D keeps every error visible in ${SSHD_LOG} for the triage
+            # below. The sleep-infinity keep-alive at the end of shell mode
+            # keeps the container alive; sshd runs as its sibling.
+            # sshd requires root for privilege separation — use sudo when
+            # available.
+            SSHD_LOG="${HOME_DIR}/.ssh/sshd.log"
+            : > "${SSHD_LOG}"
             if [[ -n "${SUDO}" ]]; then
-                ${SUDO} /usr/sbin/sshd -f "${SSHD_CONFIG}" 2>&1 | tail -3
+                ${SUDO} /usr/sbin/sshd -D -f "${SSHD_CONFIG}" >> "${SSHD_LOG}" 2>&1 &
             else
-                /usr/sbin/sshd -f "${SSHD_CONFIG}" 2>&1 | tail -3
+                /usr/sbin/sshd -D -f "${SSHD_CONFIG}" >> "${SSHD_LOG}" 2>&1 &
+            fi
+            # VERIFY sshd is actually listening and speaking the SSH
+            # protocol. A bare TCP connect is not enough: it cannot tell
+            # sshd apart from whatever else holds the host port, so the SSH
+            # banner decides. In --ssh mode the container log is the only
+            # feedback channel, so a failure here must be loud — and show
+            # the ACTUAL error from the sshd log, not a guess.
+            _sshd_port="${LPB_SSH_PORT:-2222}"
+            _sshd_up=false
+            _port_open=false
+            for _ in $(seq 1 10); do
+                if timeout 2 bash -c "exec 3<>/dev/tcp/127.0.0.1/${_sshd_port}; head -1 <&3" 2>/dev/null | grep -q "^SSH-"; then
+                    _sshd_up=true
+                    break
+                elif timeout 1 bash -c "exec 3<>/dev/tcp/127.0.0.1/${_sshd_port}" 2>/dev/null; then
+                    _port_open=true   # something holds the port, but it is not (yet) sshd
+                fi
+                sleep 0.5
+            done
+            if [[ "${_sshd_up}" = "true" ]]; then
+                info "sshd is listening on port ${_sshd_port}."
+            elif [[ "${_port_open}" = "true" ]]; then
+                warn "Port ${_sshd_port} is open but NOT the SSH server — sshd could not bind: the port is already in use on the HOST."
+                warn "On the host:  ss -tlnp | grep ${_sshd_port}   (or: netstat -tlnp | grep ${_sshd_port})"
+                warn "Stop that process and re-run 'lpb --ssh' (or pick another port with --ssh-port)."
+            else
+                warn "sshd is NOT listening on port ${_sshd_port} — SSH login will fail."
+                if [[ -s "${SSHD_LOG}" ]]; then
+                    warn "  sshd said (last lines of ${SSHD_LOG}):"
+                    while IFS= read -r _l; do warn "    ${_l}"; done < <(tail -5 "${SSHD_LOG}")
+                else
+                    warn "  sshd produced no output — it may not have started at all."
+                fi
+                _t_out=$(${SUDO} /usr/sbin/sshd -t -f "${SSHD_CONFIG}" 2>&1) || true
+                if [[ -n "${_t_out}" ]]; then
+                    warn "  sshd config test (sshd -t) failed:"
+                    while IFS= read -r _l; do warn "    ${_l}"; done < <(printf '%s\n' "${_t_out}")
+                fi
+                warn "  Common causes: host holds port ${_sshd_port} (ss -tlnp | grep ${_sshd_port}),"
+                warn "  host key missing/bad permissions, missing /run/sshd, or no passwordless sudo."
+                warn "  Clear the cause, then re-run 'lpb --ssh' (or pick another port with --ssh-port)."
             fi
         else
             warn "sshd not available; SSH disabled (bare shell only)."

@@ -17,8 +17,70 @@ from ..cli import confirm
 from ..log import Console
 from ..run import run_cmd
 from .gitutil import git, git_auth
-from .repos import repo_path, stack_repos
+from .repos import TAG_REPOS, repo_path, stack_repos
 from .version import get_version
+
+
+# ─── Dev release gate ────────────────────────────────────────────────────────
+#
+# `lpb-devstack bump` is the dev release trigger: CI builds the image and
+# tags the 5 stack repos at their REMOTE dev heads. Local work that is not
+# pushed (or not even committed) would be silently left out of the release,
+# so bump refuses until every TAG_REPOS repo is on its dev branch, fully
+# pushed, and has no uncommitted tracked changes. (The docs gate applies to
+# the main pipeline only — see `release promote`.)
+
+
+def dev_release_gate(cons: Console, *, fetch: bool = True) -> int:
+    """Verify every TAG_REPOS repo is on its dev branch, pushed, committed.
+
+    Returns the number of blocking problems (0 = release may proceed).
+    Untracked files are ignored (local artifacts); a failed fetch is a
+    warning, not an error — network flakiness must not hard-block a local
+    release. Explicit refspec: some clones (e.g. config) have restricted
+    fetch configs that would not create refs/remotes/origin/<dev>.
+    """
+    problems = 0
+    cons.info("Dev release gate — all repos must be on dev, pushed, committed:")
+    for name, dev_branch, _main in TAG_REPOS:
+        path = repo_path(name)
+        if not (path / ".git").exists():
+            cons.warn(f"  ⚠️  {name}: no local clone at {path} — skipped")
+            continue
+        if fetch:
+            out, err, code = git_auth(path, "fetch", "origin", "--quiet",
+                                      f"+refs/heads/{dev_branch}:refs/remotes/origin/{dev_branch}",
+                                      timeout=120)
+            if code != 0:
+                why = (err.strip().splitlines() or ["?"])[0][:80]
+                cons.warn(f"  ⚠️  {name}: fetch failed ({why}) — push state unverified")
+                continue
+        cur, _, _ = git(path, "branch", "--show-current")
+        if cur.strip() != dev_branch:
+            cons.error(f"  ❌ {name}: on branch {cur.strip() or '(detached)'}, "
+                       f"expected {dev_branch}")
+            problems += 1
+            continue
+        out, _, code = git(path, "rev-list", "--count",
+                           f"origin/{dev_branch}..HEAD")
+        if code != 0:
+            cons.warn(f"  ⚠️  {name}: cannot compare with origin/{dev_branch} — unverified")
+            continue
+        ahead = int(out.strip() or 0)
+        dirty, _, _ = git(path, "status", "--porcelain")
+        uncommitted = [l for l in dirty.splitlines()
+                       if l.strip() and not l.startswith("??")]
+        if ahead:
+            cons.error(f"  ❌ {name}: {ahead} unpushed commit(s) on {dev_branch} — "
+                       f"push before the release (CI tags remote HEAD)")
+            problems += 1
+        elif uncommitted:
+            cons.error(f"  ❌ {name}: {len(uncommitted)} uncommitted tracked change(s) — "
+                       f"commit (or stash) before the release")
+            problems += 1
+        else:
+            cons.info(f"  ✅ {name}: on {dev_branch}, pushed, clean")
+    return problems
 
 
 # ─── Docs readiness ──────────────────────────────────────────────────────────
@@ -570,7 +632,7 @@ def cmd_release_promote(*, assume_yes: bool, dry_run: bool, rebase: bool,
     cons.info(f"CI (main pipeline) now builds :{stable_version}-* / :main-* / :latest-*")
     cons.info("and tags the 5 repos at the stable branches.")
     cons.info("After CI passes:")
-    cons.info("  1. lpb-devstack --tag main workspace sync-pins")
+    cons.info("  1. lpb-config --tag main sync-pins")
     cons.info("  2. pi update --extensions")
     cons.info(f"  (If CI's tag-repos didn't run: lpb-devstack tag-repos --branch main --version {stable_version})")
     cons.info(f"Docs: the main pipeline publishes the stable docs version "

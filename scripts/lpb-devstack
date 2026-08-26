@@ -13,8 +13,6 @@ Usage:
       Show workspace repo branches + alignment.
   lpb-devstack workspace sync
       Clone/symlink/align/pull workspace repos (the single write path).
-  lpb-devstack workspace sync-pins
-      Sync settings.json extension pins to the pipeline's stack version.
   lpb-devstack validate
       Full stack alignment check (repos, branches, pins, env).
   lpb-devstack release status
@@ -76,13 +74,13 @@ from localpibox.stack.workspace import (  # noqa: E402
     _resolve_repo_path,
     cmd_workspace_status,
     cmd_workspace_sync,
-    cmd_workspace_sync_pins,
 )
 from localpibox.stack.validate import cmd_validate  # noqa: E402
 from localpibox.stack.release import (  # noqa: E402
     cmd_release_docs_ready,
     cmd_release_promote,
     cmd_release_status,
+    dev_release_gate,
 )
 
 
@@ -90,7 +88,8 @@ from localpibox.stack.release import (  # noqa: E402
 
 def cmd_bump(cons: Console, *, minor: bool = False, major: bool = False,
              set_version: str | None = None,
-             no_commit: bool = False, push: bool = False) -> int:
+             no_commit: bool = False, push: bool = False,
+             force: bool = False) -> int:
     """Bump devstack/VERSION and commit it (push is manual — CI builds on it)."""
     vf = _find_version_file()
     if vf is None:
@@ -117,6 +116,17 @@ def cmd_bump(cons: Console, *, minor: bool = False, major: bool = False,
     if new == current:
         cons.warn(f"VERSION unchanged ({current})")
         return 0
+
+    # Dev release gate: CI tags the REMOTE dev heads of the other repos, so
+    # unpushed/uncommitted local work would ship invisibly. Block unless --force.
+    if not force:
+        problems = dev_release_gate(cons)
+        if problems:
+            cons.error(f"Dev release gate: {problems} problem(s) — fix and re-run, "
+                       f"or bypass with --force")
+            return 1
+    else:
+        cons.warn("Dev release gate skipped (--force)")
 
     vf.write_text(new + "\n")
     cons.info(f"VERSION: {current} → {new}")
@@ -320,6 +330,8 @@ def main(argv: list[str] | None = None) -> int:
                         help="write VERSION but don't commit")
     p_bump.add_argument("--push", action="store_true",
                         help="commit + push (triggers the CI build + tag)")
+    p_bump.add_argument("--force", action="store_true",
+                        help="skip the dev release gate (other repos pushed/committed check)")
 
     # Repo tagging
     p_tag = _add_subparser(sub, "tag-repos", "Tag the 5 stack repos at the committed VERSION")
@@ -335,7 +347,6 @@ def main(argv: list[str] | None = None) -> int:
     ws_sub = p_ws.add_subparsers(dest="workspace_command")
     _add_subparser(ws_sub, "status", "Show workspace repo branches + alignment")
     _add_subparser(ws_sub, "sync", "Prepare workspace: clone missing repos, create symlinks, align branches, pull latest")
-    _add_subparser(ws_sub, "sync-pins", "Sync settings.json extension pins to the pipeline's stack version")
 
     # Stack validation
     _add_subparser(sub, "validate", "Full stack alignment check (repos, branches, pins, env)")
@@ -376,7 +387,8 @@ def main(argv: list[str] | None = None) -> int:
                         major=getattr(args, "major", False),
                         set_version=getattr(args, "set_version", None),
                         no_commit=getattr(args, "no_commit", False),
-                        push=getattr(args, "push", False))
+                        push=getattr(args, "push", False),
+                        force=getattr(args, "force", False))
     if args.command == "tag-repos":
         return cmd_tag_repos(cons, pipeline=pipeline,
                              version=getattr(args, "version", None),
@@ -389,8 +401,6 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_workspace_status(pipeline, cons)
         if args.workspace_command == "sync":
             return cmd_workspace_sync(pipeline, cons)
-        if args.workspace_command == "sync-pins":
-            return cmd_workspace_sync_pins(pipeline, cons)
     if args.command == "validate":
         return cmd_validate(pipeline, cons)
     if args.command == "release":

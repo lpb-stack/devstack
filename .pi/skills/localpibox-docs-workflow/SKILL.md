@@ -87,7 +87,7 @@ failure means a raw code block on GitHub.
 3. **Links (devstack):** README links doc pages as `doc/<x>.md` — that path
    works on GitHub, and `generate.py` rewrites it to `reference/<x>.md` in
    the derived site copy. Doc pages link siblings with bare filenames
-   (`[lpb CLI](lpb-cli.md)`). **Every linked `doc/*.md` must exist in
+   (e.g. the link target `lpb-cli.md`). **Every linked `doc/*.md` must exist in
    generate.py's CONTENT map + mkdocs nav** or the site link 404s.
 4. **Callouts:** use `> ⚠️ …` blockquotes — they render on GitHub *and* the
    site. MkDocs admonitions (`!!! warning`) do **not** render on GitHub.
@@ -179,7 +179,7 @@ every repo touched, and (for release) `release status` shows `READY`.
   404s on the site.
 - **mike 2.x** has no `mike build`; use `mkdocs build` / `mike serve`.
 - **Version stamps:** generate.py matches the devstack VERSION **exactly**
-  (substring matching confuses `0.0.62-lpb` with `0.0.62-lpb-dev`).
+  (substring matching confuses `0.0.N-lpb` with `0.0.N-lpb-dev`).
 - **Docs branch is not a PR target** — content is merged `dev → docs` by
   `release docs-ready`; only the site plumbing lives there.
 - **mermaid/jsdom pin:** the parse check is pinned to `mermaid@11.12.2` +

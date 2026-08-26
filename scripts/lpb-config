@@ -12,15 +12,26 @@ Usage:
   lpb-config render [--force] — Regenerate runtime config from templates
   lpb-config align           — Sync extension pins to latest GitHub tags
   lpb-config setup [--reconfigure] [--non-interactive]
-                             First-run setup: lemonade provider, default model,
-                             lpb-memory config (runs on first boot via start.sh)
+                             Initial setup wizard (shared with 'lpb setup'):
+                             config repo, lemonade provider, default model,
+                             lpb-memory config — every step validated live
+  lpb-config check           — Validate the installation (read-only)
+
+  lpb-config show [--json]   — All effective runtime settings (model, server,
+                             thinking level, MCP servers, pins, memory config)
+  lpb-config models          — List models served by the configured Lemonade server
+  lpb-config set model <id>  — Set default model (validated against the live server)
+  lpb-config set thinking <level> — Set default thinking level
+  lpb-config set base-url <url>   — Set Lemonade server (API key preserved)
+  lpb-config set api-key <key>    — Set Lemonade API key (server preserved)
 
   lpb-config memory show     — Show lpb-memory config
   lpb-config memory setup    — Interactive memory config wizard
 
 Template rendering:
   The config repo ships templates (settings.json.template,
-  lpb-memory-config.json.template); the rendered files are gitignored.
+  lpb-memory-config.json.template, mcp.json.template); the rendered files
+  are gitignored.
   start.sh generates them on first boot only (gated by ~/.pi/.initialized),
   so lpb-config re-renders after reset/update/merge and offers 'render'
   for on-demand regeneration. '--force' merges: user-added keys survive,
@@ -29,8 +40,10 @@ Template rendering:
 Moved to lpb-devstack (dev-time workspace tool):
   lpb-devstack bump | tag-repos | workspace ... | validate | release ...
 
-`--tag dev|main` is still accepted (validates the value) for muscle memory;
-the remaining commands operate on the config repo regardless of pipeline.
+`--tag dev|main` selects the pipeline for `sync-pins` (the only
+pipeline-sensitive command). Without `--tag`, the pipeline is detected via
+detect_pipeline() (LPB_IMAGE_TAG env, then the devstack VERSION file,
+then LPB_VERSION — same resolution as lpb-devstack).
 
 Environment:
   AGENT_DIR         — Config repo path (default: /home/lpb/.pi/agent)
@@ -47,7 +60,6 @@ import os
 import re
 import shutil
 import sys
-import time
 import urllib.request
 from pathlib import Path
 
@@ -67,6 +79,19 @@ for _c in (
 from localpibox.cli import confirm, install_sigpipe_handler  # noqa: E402
 from localpibox.log import Console  # noqa: E402
 from localpibox.run import run_cmd  # noqa: E402
+from localpibox.setup import (  # noqa: E402
+    AbortError,
+    bare_base_url,
+    configure_memory,
+    decode_creds,
+    doctor as setup_doctor,
+    lemonade_creds,
+    load_json_file,
+    probe_server,
+    run_wizard,
+    write_default_model,
+    write_lemonade_auth,
+)
 from localpibox.stack.gitutil import _github_token, git  # noqa: E402
 from localpibox.stack.repos import (  # noqa: E402
     DEFAULT_AGENT_DIR,
@@ -75,7 +100,11 @@ from localpibox.stack.repos import (  # noqa: E402
     LPB_EXTENSION_REPOS,
     migrate_legacy_layout,
 )
-from localpibox.stack.version import get_version  # noqa: E402
+from localpibox.stack.version import detect_pipeline, get_version  # noqa: E402
+from localpibox.stack.workspace import (  # noqa: E402
+    _write_settings,
+    cmd_workspace_sync_pins,
+)
 
 # ─── Config repo helpers ──────────────────────────────────────────────────
 
@@ -234,6 +263,10 @@ def _render_templates(agent_dir: str | Path, cons: Console, *, force: bool) -> N
         agent_dir, "lpb-memory-config.json.template", "lpb-memory-config.json", cons,
         force=force, version=None, local_wins=True,
     )
+    _render_file(
+        agent_dir, "mcp.json.template", "mcp.json", cons,
+        force=force, version=None, local_wins=True,
+    )
 
 
 def cmd_render(agent_dir: str | Path, cons: Console, *, force: bool = False) -> int:
@@ -265,7 +298,7 @@ def cmd_status(agent_dir: str | Path, remote: str, ref: str, cons: Console) -> i
         cons.warn("No remote configured")
         return 0
 
-    remote_head = git(agent_dir, "rev-parse", f"origin/{ref}")[0].strip()
+    remote_head = git(agent_dir, "rev-parse", "--verify", f"origin/{ref}")[0].strip()
     if remote_head:
         cons.info(f"Remote:      {remote_head[:8]} origin/{ref} (last fetch)")
 
@@ -278,11 +311,28 @@ def cmd_status(agent_dir: str | Path, remote: str, ref: str, cons: Console) -> i
         cons.info("Working tree: clean")
 
     if remote_head:
-        _, _, code = git(agent_dir, "merge-base", "--is-ancestor", cur, remote_head)
-        if code == 0:
-            cons.info("Status:      up to date (or ahead)")
+        out, _, code = git(agent_dir, "rev-list", "--left-right", "--count",
+                           f"HEAD...origin/{ref}")
+        if code:
+            cons.warn(f"Status:      could not compare with origin/{ref}")
         else:
-            cons.warn("Status:      behind remote — run 'lpb-config update' to fetch")
+            parts = out.split()
+            ahead_n = int(parts[0]) if len(parts) > 0 else 0
+            behind_n = int(parts[1]) if len(parts) > 1 else 0
+            if ahead_n == 0 and behind_n == 0:
+                cons.info(f"Status:      up to date with origin/{ref}")
+            elif ahead_n == 0:
+                cons.warn(f"Status:      behind origin/{ref} by {behind_n} — "
+                          f"run 'lpb-config update' to fetch")
+            elif behind_n == 0:
+                cons.info(f"Status:      ahead of origin/{ref} by {ahead_n} "
+                          f"(unpushed commit(s))")
+            else:
+                cons.warn(f"Status:      diverged from origin/{ref} (ahead {ahead_n}, "
+                          f"behind {behind_n}) — run 'lpb-config merge'")
+    else:
+        cons.warn(f"Status:      origin/{ref} not found locally — "
+                  f"run 'lpb-config update' to fetch")
     return 0
 
 
@@ -301,7 +351,7 @@ def cmd_update(agent_dir: str | Path, remote: str, ref: str, cons: Console) -> i
         cons.error(f"Failed to fetch from {remote}: {err.strip() or out.strip()}")
         return 1
 
-    remote_head = git(agent_dir, "rev-parse", f"origin/{ref}")[0].strip()
+    remote_head = git(agent_dir, "rev-parse", "--verify", f"origin/{ref}")[0].strip()
     cur_head = git(agent_dir, "rev-parse", "HEAD")[0].strip()
     if remote_head == cur_head:
         cons.info("Already up to date.")
@@ -354,7 +404,7 @@ def cmd_reset(
 
     cons.warn(f"This will destroy ALL local changes in {agent_dir}.")
     cons.raw(f"  Current: {head_short(agent_dir)}")
-    remote_head = git(agent_dir, "rev-parse", f"origin/{ref}")[0].strip()[:8]
+    remote_head = git(agent_dir, "rev-parse", "--verify", f"origin/{ref}")[0].strip()[:8]
     cons.raw(f"  Remote:  {remote_head}")
 
     if not force and not confirm("  Continue?", default=False, inp=inp):
@@ -389,7 +439,7 @@ def cmd_merge(agent_dir: str | Path, remote: str, ref: str, cons: Console) -> in
     cons.info(f"Fetching latest from {remote}...")
     git(agent_dir, "fetch", "origin", ref)
 
-    remote_head = git(agent_dir, "rev-parse", f"origin/{ref}")[0].strip()
+    remote_head = git(agent_dir, "rev-parse", "--verify", f"origin/{ref}")[0].strip()
     cur_head = git(agent_dir, "rev-parse", "HEAD")[0].strip()
     if remote_head == cur_head:
         cons.info("Already up to date.")
@@ -524,274 +574,303 @@ def cmd_memory_show(agent_dir: str | Path, cons: Console) -> int:
 
 def cmd_memory_setup(*, agent_dir: str | Path, non_interactive: bool = False,
                      default_model: str | None = None, cons: Console) -> int:
-    """Interactive memory config wizard."""
+    """Interactive memory config wizard (shared with the setup wizard)."""
     agent_dir = Path(agent_dir)
-    template = agent_dir / "lpb-memory-config.json.template"
-    out = agent_dir / "lpb-memory-config.json"
-    if not template.is_file():
-        cons.error("Template not found:")
-        cons.error(f"  {template}")
-        cons.info("Run 'lpb-config update' to fetch latest config repo.")
+    interactive = not non_interactive and sys.stdin.isatty()
+    if interactive:
+        cons.info("=" * 50)
+        cons.info("  lpb-memory Configuration")
+        cons.info("=" * 50)
+        cons.info("")
+    try:
+        ok = configure_memory(agent_dir, cons, interactive=interactive,
+                              default_model=default_model or "")
+    except AbortError:
+        cons.warn("Memory setup aborted — nothing was written.")
         return 1
-
-    base = json.loads(template.read_text())
-
-    if non_interactive:
-        if default_model:
-            base["llmModelOverride"] = default_model
-            base["llmThinkingOverride"] = "low"
-        out.write_text(json.dumps(base, indent=2) + "\n")
-        cons.info(f"Generated {out} from template.")
-        cons.info("Run 'lpb-config memory setup' to customize.")
-        cons.info("Restart Pi session (/new) to apply.")
-        return 0
-
-    cons.info("=" * 50)
-    cons.info("  lpb-memory Configuration")
-    cons.info("=" * 50)
-    cons.info("")
-
-    modes = [
-        ("legacy-inject", "Inject memory into every prompt (~4KB, recommended)"),
-        ("policy-only", "AI must search memory proactively (saves context)"),
-    ]
-    cons.info("[1] Memory mode:")
-    for i, (mode, desc) in enumerate(modes, 1):
-        marker = " ← current" if base.get("memoryMode") == mode else ""
-        cons.info(f"  {i}. {mode:<15} {desc}{marker}")
-    choice = input("\n  Choice [1]: ").strip() or "1"
-    if choice == "2":
-        base["memoryMode"] = "policy-only"
-        base["memoryPolicyStyle"] = "compact"
-    cons.info("")
-
-    transports = [
-        ("subprocess", "Offload to separate model (free main session, recommended)"),
-        ("direct", "Use main model (faster, blocks main session)"),
-    ]
-    cons.info("[2] Review transport:")
-    for i, (t, desc) in enumerate(transports, 1):
-        marker = " ← current" if base.get("reviewTransport") == t else ""
-        cons.info(f"  {i}. {t:<15} {desc}{marker}")
-    choice = input("\n  Choice [1]: ").strip() or "1"
-    if choice == "2":
-        base["reviewTransport"] = "direct"
-    cons.info("")
-
-    cons.info("[3] Model for background operations:")
-    cons.info("  (Leave empty to use main model)")
-    model = input(f"  Model [Enter to accept {default_model or '(none)'}]: ").strip()
-    model = model or (default_model or "")
-    if model:
-        base["llmModelOverride"] = model
-        base["llmThinkingOverride"] = "low"
-    cons.info("")
-
-    cons.info("[4] Context limits (press Enter for defaults):")
-    val = input(f"  Memory entries [{base.get('memoryCharLimit', 3000)}]: ").strip()
-    if val:
-        base["memoryCharLimit"] = int(val)
-    val = input(f"  User preferences [{base.get('userCharLimit', 3000)}]: ").strip()
-    if val:
-        base["userCharLimit"] = int(val)
-    val = input(f"  Max failures [{base.get('failureInjectionMaxEntries', 3)}]: ").strip()
-    if val:
-        base["failureInjectionMaxEntries"] = int(val)
-    cons.info("")
-
-    out.write_text(json.dumps(base, indent=2) + "\n")
-    cons.done(f"Config written to {out}")
+    if not ok:
+        return 1
     cons.info("")
     cons.info("Apply: restart Pi session with /new")
     cons.info("Review: lpb-config memory show")
-
     return 0
 
 
-# ─── First-run setup (provider + default model + memory) ────────────────
+# ─── Initial setup (shared wizard) + check ────────────────────────────────
 #
-# `lpb-config setup` runs on first boot (from start.sh) and on demand. It
-# configures the lemonade provider (auth.json), the default model
-# (settings.json) and the lpb-memory config, so a fresh stack is ready to
-# use immediately. Interactive by default; --non-interactive for TTY-less
-# boots (driven by LEMONADE_BASE_URL / LEMONADE_API_KEY env vars).
-
-_CREDS_TTL_MS = 24 * 60 * 60 * 1000  # matches the plugin's CREDS_TTL_MS
-
-
-def _http_get_json(url: str, timeout: float = 8.0):
-    """GET a JSON document from the lemonade server (raises on failure)."""
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as res:
-        return json.loads(res.read().decode())
-
-
-def _bare_base_url(raw: str) -> str:
-    """Normalize a server URL to bare http://host:port (strip /v1, /api/v1 …)."""
-    url = (raw or "").strip()
-    if not url:
-        return ""
-    if not url.startswith(("http://", "https://")):
-        url = "http://" + url
-    return re.sub(r"/(api/)?v\d+/?$", "", url)
-
-
-def _server_name(base_url: str) -> str:
-    from urllib.parse import urlparse
-    return urlparse(base_url).hostname or "Lemonade"
-
-
-def _load_json_file(path: Path) -> dict | None:
-    try:
-        data = json.loads(path.read_text())
-        return data if isinstance(data, dict) else None
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _lemonade_creds(agent_dir: Path) -> dict | None:
-    """Stored lemonade creds entry from auth.json, if any (matches the
-    plugin's readStoredPayload candidate order)."""
-    data = _load_json_file(agent_dir / "auth.json")
-    if not data:
-        return None
-    for entry in (data.get("lemonade"),
-                  (data.get("providers") or {}).get("lemonade"),
-                  (data.get("oauth") or {}).get("lemonade")):
-        if isinstance(entry, dict) and isinstance(entry.get("refresh"), str):
-            return entry
-    return None
-
-
-def _fetch_models(base_url: str, api_key: str):
-    """Return (models, loaded_ids) — mirrors the plugin's fetchModels."""
-    data = _http_get_json(f"{base_url}/api/v1/models")
-    items = data.get("data") if isinstance(data, dict) else None
-    models = [
-        {"id": str(m.get("id", "")), "name": m.get("name"),
-         "ctx": m.get("max_context_window")}
-        for m in (items or []) if m.get("id")
-    ]
-    loaded: set = set()
-    try:
-        health = _http_get_json(f"{base_url}/api/v1/health", timeout=5.0)
-        if isinstance(health, dict):
-            for bm in health.get("all_models_loaded") or []:
-                loaded.add(bm.get("model_name"))
-    except Exception:
-        pass  # health is optional — only marks models as "loaded"
-    return models, loaded
-
+# `lpb-config setup` is the container-side entry point of the SAME wizard
+# that `lpb setup` runs on the host (localpibox.setup.run_wizard): config
+# repo, lemonade provider, default model, lpb-memory config. Every step is
+# validated live; failures loop (interactive) or abort with a precise error
+# (non-interactive). start.sh runs the non-interactive form as a fallback
+# when the host wizard did not run; the host wizard is primary.
 
 def cmd_setup(*, agent_dir: str | Path, non_interactive: bool = False,
               reconfigure: bool = False, cons: Console) -> int:
-    """First-run setup: lemonade provider + default model + lpb-memory config."""
+    """Initial setup wizard (shared with 'lpb setup').
+
+    Non-interactive + already configured + no --reconfigure → no-op
+    (CI safety). Everything else runs the full wizard, which re-offers
+    current values as defaults — the way to correct a bad configuration.
+    """
     agent_dir = Path(agent_dir)
-    if not reconfigure and _lemonade_creds(agent_dir) is not None:
+    creds = lemonade_creds(agent_dir)
+    if creds is not None and not reconfigure and non_interactive:
         cons.info("Lemonade is already configured.")
         cons.info("Re-run with 'lpb-config setup --reconfigure' to change server or model.")
         return 0
 
     interactive = not non_interactive and sys.stdin.isatty()
-    cons.info("=" * 50)
-    cons.info("  LocalPibox first-run setup")
-    cons.info("=" * 50)
+    try:
+        result = run_wizard(
+            agent_dir=agent_dir,
+            cons=cons,
+            interactive=interactive,
+            reconfigure=creds is not None,
+            default_base_url=os.environ.get("LEMONADE_BASE_URL", ""),
+            default_api_key=os.environ.get("LEMONADE_API_KEY", ""),
+            config_remote=os.environ.get("CONFIG_REMOTE", ""),
+            config_ref=os.environ.get("CONFIG_REF", "main"),
+        )
+    except AbortError:
+        cons.warn("Setup aborted — nothing was written.")
+        return 1
+    if result.aborted:
+        return 1
+    if result.ok:
+        for w in result.warnings:
+            cons.warn(f"  ⚠ {w}")
+        cons.info("Verify any time with: lpb-config check")
+        return 0
+    cons.error("Setup did not complete — nothing was persisted.")
+    if result.error:
+        cons.info(result.error)
+    return 1
+
+
+def cmd_check(*, agent_dir: str | Path, cons: Console) -> int:
+    """Validate the installation (read-only checklist)."""
+    return setup_doctor(agent_dir=agent_dir, cons=cons)
+
+
+# ─── Runtime settings: show / models / set ─────────────────────────────────
+#
+# The agent's startup context (AGENTS.md) deliberately carries only stable
+# stack facts. Dynamic runtime values — model, Lemonade endpoint, thinking
+# level, MCP servers, memory config — live in rendered files (settings.json,
+# auth.json, mcp.json, lpb-memory-config.json) and are inspected or changed
+# here, so nothing has to be hardcoded in docs or prompts.
+
+THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+
+
+def _lemonade_state(agent_dir: Path) -> tuple[str, str]:
+    """(baseUrl, apiKey) from auth.json; ('', '') when unconfigured."""
+    entry = lemonade_creds(agent_dir)
+    if entry is None:
+        return "", ""
+    return decode_creds(entry)
+
+
+def _config_repo_line(agent_dir: Path) -> str:
+    if not (agent_dir / ".git").is_dir():
+        return "(no config repo)"
+    branch = git(agent_dir, "branch", "--show-current")[0].strip() or "(detached)"
+    changes = git(agent_dir, "status", "--porcelain")[0].strip()
+    state = "clean" if not changes else f"{len(changes.splitlines())} local change(s)"
+    return f"{head_short(agent_dir)} on {branch} — {state}"
+
+
+def cmd_show(agent_dir: str | Path, cons: Console, *, as_json: bool = False) -> int:
+    """Show all effective runtime settings (agent-readable; --json for machines)."""
+    agent_dir = Path(agent_dir)
+    settings = load_json_file(agent_dir / "settings.json") or {}
+    base, key = _lemonade_state(agent_dir)
+
+    mcp: dict[str, bool] = {}
+    mcp_cfg = load_json_file(agent_dir / "mcp.json")
+    for name, spec in ((mcp_cfg or {}).get("mcpServers") or {}).items():
+        mcp[name] = bool(spec.get("enabled", True)) if isinstance(spec, dict) else True
+
+    memory = load_json_file(agent_dir / "lpb-memory-config.json") or {}
+    pins = _pinned_summary(settings)
+
+    probe = None
+    if base:
+        probe = probe_server(base, key, timeout=4.0)
+
+    if as_json:
+        data = {
+            "stackVersion": _resolve_version(),
+            "configRepo": _config_repo_line(agent_dir),
+            "provider": settings.get("defaultProvider"),
+            "model": settings.get("defaultModel"),
+            "thinkingLevel": settings.get("defaultThinkingLevel"),
+            "lemonade": {
+                "baseUrl": base or None,
+                "keySet": bool(key),
+                "reachable": bool(probe and probe.ok),
+                "models": len(probe.models) if probe and probe.ok else None,
+                "probeMessage": probe.error if probe and not probe.ok else None,
+            },
+            "mcpServers": mcp,
+            "extensionPins": pins,
+            "memory": {
+                "mode": memory.get("memoryMode"),
+                "memoryCharLimit": memory.get("memoryCharLimit"),
+                "userCharLimit": memory.get("userCharLimit"),
+                "failureInjection": memory.get("failureInjectionMaxEntries"),
+                "failureMaxAgeDays": memory.get("failureInjectionMaxAgeDays"),
+                "reviewModel": memory.get("llmModelOverride"),
+            },
+            "sources": ["settings.json", "auth.json", "mcp.json", "lpb-memory-config.json"],
+        }
+        print(json.dumps(data, indent=2))
+        return 0
+
+    cons.info(f"LocalPibox runtime settings (stack {_resolve_version()})")
+    cons.info(f"  Config repo:      {_config_repo_line(agent_dir)}")
+    cons.info(f"  Provider / model: {settings.get('defaultProvider') or '(not set)'} / "
+              f"{settings.get('defaultModel') or '(not set)'}")
+    cons.info(f"  Thinking level:   {settings.get('defaultThinkingLevel') or '(pi default)'}")
+    if base:
+        if probe and probe.ok:
+            server = f"reachable, {len(probe.models)} model(s)"
+        elif probe:
+            server = f"NOT reachable ({probe.error})"
+        else:
+            server = "not probed"
+        cons.info(f"  Lemonade server:  {base} (key {'set' if key else 'MISSING'}) — {server}")
+    else:
+        cons.warn("  Lemonade server:  not configured (lpb-config setup, or set base-url + api-key)")
+    if mcp:
+        on = [n for n, e in mcp.items() if e]
+        off = [n for n, e in mcp.items() if not e]
+        extra = f" · disabled: {', '.join(off)}" if off else ""
+        cons.info(f"  MCP servers:      {', '.join(on)}{extra}")
+    if pins:
+        cons.info(f"  Extension pins:   {', '.join(f'{n}@{v}' for n, v in sorted(pins.items()))}")
+    if memory:
+        cons.info(
+            f"  lpb-memory:       {memory.get('memoryMode', '?')} · "
+            f"limits mem/user {memory.get('memoryCharLimit', '?')}/{memory.get('userCharLimit', '?')} chars · "
+            f"failures ≤{memory.get('failureInjectionMaxEntries', '?')} ({memory.get('failureInjectionMaxAgeDays', '?')}d) · "
+            f"review model {memory.get('llmModelOverride', 'main')}")
     cons.info("")
+    cons.info("Change: lpb-config set model|thinking|base-url|api-key · wizard: lpb-config setup")
+    cons.info("In Pi: /model, /settings · list models: lpb-config models")
+    return 0
 
-    # ── [1] Server URL ────────────────────────────────────────────────────
-    base = _bare_base_url(os.environ.get("LEMONADE_BASE_URL", "")) or "http://127.0.0.1:13305"
-    models, loaded = [], set()
-    if interactive:
-        cons.info("[1] Lemonade server URL")
-        while True:
-            val = input(f"  URL [Enter to accept {base}]: ").strip()
-            base = _bare_base_url(val or base)
-            cons.info(f"  Checking {base} …")
-            try:
-                models, loaded = _fetch_models(base, "")
-                break
-            except Exception as e:
-                cons.warn(f"  Unreachable: {e}")
-                if input("  Continue anyway? [y/N]: ").strip().lower().startswith("y"):
-                    models, loaded = [], set()
-                    break
+
+def _pinned_summary(settings: dict) -> dict[str, str]:
+    pins: dict[str, str] = {}
+    for pkg in settings.get("packages") or []:
+        if isinstance(pkg, str) and "lpb-stack/" in pkg:
+            name = pkg.split("lpb-stack/")[1].split("@")[0]
+            pins[name] = pkg.rsplit("@", 1)[-1] if "@" in pkg else "(unpinned)"
+    return pins
+
+
+def cmd_models(agent_dir: str | Path, cons: Console) -> int:
+    """List the models served by the configured Lemonade server."""
+    agent_dir = Path(agent_dir)
+    base, key = _lemonade_state(agent_dir)
+    if not base:
+        cons.error("No Lemonade server configured.")
+        cons.info("Set one with: lpb-config set base-url <url>  (and: lpb-config set api-key <key>)")
+        return 1
+    res = probe_server(base, key, timeout=8.0)
+    if not res.ok:
+        cons.error(f"Server check failed: {res.error}")
+        cons.info(f"  endpoint: {base}")
+        cons.info("Fix with: lpb-config set base-url <url> / lpb-config set api-key <key>")
+        return 1
+    settings = load_json_file(agent_dir / "settings.json") or {}
+    current = settings.get("defaultModel")
+    cons.info(f"{base} — {len(res.models)} model(s):")
+    for m in res.models:
+        marks = []
+        if m["id"] in (res.loaded or set()):
+            marks.append("[loaded]")
+        if m["id"] == current:
+            marks.append("← default")
+        cons.info(f"  {m['id']}{'  ' + ' '.join(marks) if marks else ''}")
+    if current and current not in {m["id"] for m in res.models}:
+        cons.warn(f"Current default '{current}' is NOT in the server's list — pick one above:")
+        cons.warn("  lpb-config set model <id>")
+    return 0
+
+
+def _report_probe(agent_dir: Path, cons: Console) -> None:
+    base, key = _lemonade_state(agent_dir)
+    if not base:
+        return
+    res = probe_server(base, key, timeout=8.0)
+    if res.ok:
+        cons.info(f"  ✓ server reachable — {len(res.models)} model(s) at {base}")
     else:
-        try:
-            models, loaded = _fetch_models(base, "")
-        except Exception as e:
-            cons.error(f"Lemonade server unreachable at {base}: {e}")
-            cons.info("Start the server (or set LEMONADE_BASE_URL) and re-run:")
-            cons.info("  lpb-config setup")
-            return 1
+        cons.warn(f"  ⚠ server check: {res.error} ({base})")
 
-    # ── [2] API key ───────────────────────────────────────────────────────
-    env_key = os.environ.get("LEMONADE_API_KEY", "").strip()
-    if interactive:
-        cons.info("[2] API key (local server — a placeholder like 'lemonade' is fine)")
-        key = input(f"  Key [Enter to accept {env_key or 'lemonade'}]: ").strip()
-        key = key or env_key or "lemonade"
+
+def cmd_set_model(agent_dir: str | Path, model: str, cons: Console) -> int:
+    """Set the default model in settings.json (validated live when reachable)."""
+    agent_dir = Path(agent_dir)
+    base, key = _lemonade_state(agent_dir)
+    if base:
+        res = probe_server(base, key, timeout=8.0)
+        if res.ok and model not in {m["id"] for m in res.models}:
+            cons.warn(f"  ⚠ '{model}' is not in the server's model list ({len(res.models)} models).")
+            cons.warn("    Setting it anyway — check 'lpb-config models' for valid IDs.")
     else:
-        key = env_key or "lemonade"
+        cons.warn("  ⚠ no Lemonade server configured — model not validated live.")
+    if not write_default_model(agent_dir, model, cons):
+        return 1
+    cons.info("Apply: start a new session (/new) or restart Pi")
+    return 0
 
-    # ── Write auth.json (shape matches the plugin's encodeCreds) ─────────
-    auth = _load_json_file(agent_dir / "auth.json") or {}
-    auth["lemonade"] = {
-        "type": "oauth",
-        "refresh": json.dumps(
-            {"baseUrl": base, "apiKey": key, "serverName": _server_name(base)}),
-        "access": key,
-        "expires": int(time.time() * 1000) + _CREDS_TTL_MS,
-    }
-    auth_path = agent_dir / "auth.json"
-    auth_path.parent.mkdir(parents=True, exist_ok=True)
-    auth_path.write_text(json.dumps(auth, indent=2) + "\n")
-    try:
-        os.chmod(auth_path, 0o600)
-    except OSError:
-        pass
-    cons.done(f"Lemonade provider configured: {base}")
 
-    # ── [3] Default model ─────────────────────────────────────────────────
-    # Re-fetch with the key (in case the server requires auth for models).
-    try:
-        models, loaded = _fetch_models(base, key)
-    except Exception:
-        pass
-    chosen = None
-    if not models:
-        cons.warn("Server reported no models — skipping default model selection.")
-        cons.info("Load a model, then re-run: lpb-config setup --reconfigure")
-    else:
-        default_idx = next((i for i, m in enumerate(models) if m["id"] in loaded), 0)
-        if interactive:
-            cons.info("[3] Default model")
-            for i, m in enumerate(models, 1):
-                mark = "  (loaded)" if m["id"] in loaded else ""
-                name = f"  ({m['name']})" if m.get("name") and m["name"] != m["id"] else ""
-                cons.info(f"  {i}. {m['id']}{name}{mark}")
-            ans = input(f"  Pick [1-{len(models)}] (default {default_idx + 1}): ").strip() \
-                or str(default_idx + 1)
-            if ans.isdigit() and 1 <= int(ans) <= len(models):
-                chosen = models[int(ans) - 1]["id"]
-            else:
-                chosen = models[default_idx]["id"]
-        else:
-            chosen = models[default_idx]["id"]
-            cons.info(f"Default model (auto): {chosen}")
-        settings = _load_json_file(agent_dir / "settings.json")
-        if settings is not None:
-            settings["defaultProvider"] = "lemonade"
-            settings["defaultModel"] = chosen
-            (agent_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
-            cons.done(f"Default model: lemonade/{chosen}")
-        else:
-            cons.warn("settings.json not found or invalid — model not written.")
-            cons.info("Run 'lpb-config render', then: lpb-config setup --reconfigure")
+def cmd_set_thinking(agent_dir: str | Path, level: str, cons: Console) -> int:
+    """Set the default thinking level in settings.json."""
+    agent_dir = Path(agent_dir)
+    settings = load_json_file(agent_dir / "settings.json")
+    if settings is None:
+        cons.error(f"settings.json not found: {agent_dir / 'settings.json'}")
+        return 1
+    settings["defaultThinkingLevel"] = level
+    _write_settings(agent_dir, settings)
+    cons.info(f"  ✓ settings.json — defaultThinkingLevel = {level}")
+    cons.info("Apply: start a new session (/new) or restart Pi")
+    return 0
 
-    # ── [4] lpb-memory config ─────────────────────────────────────────────
-    cons.info("[4] lpb-memory configuration")
-    return cmd_memory_setup(agent_dir=agent_dir, non_interactive=non_interactive,
-                            default_model=chosen, cons=cons)
+
+def cmd_set_base_url(agent_dir: str | Path, url: str, cons: Console) -> int:
+    """Set the Lemonade server URL in auth.json (API key preserved)."""
+    agent_dir = Path(agent_dir)
+    base = bare_base_url(url)
+    if not base:
+        cons.error(f"Invalid URL: {url!r}")
+        return 1
+    _old_base, key = _lemonade_state(agent_dir)
+    if not write_lemonade_auth(agent_dir, base, key, cons):
+        return 1
+    _report_probe(agent_dir, cons)
+    cons.info("Apply: start a new session (/new) or restart Pi")
+    return 0
+
+
+def cmd_set_api_key(agent_dir: str | Path, key: str, cons: Console) -> int:
+    """Set the Lemonade API key in auth.json (server URL preserved)."""
+    agent_dir = Path(agent_dir)
+    base, _old_key = _lemonade_state(agent_dir)
+    if not base:
+        cons.error("No Lemonade server configured yet — set the URL first:")
+        cons.info("  lpb-config set base-url <url>")
+        return 1
+    if not write_lemonade_auth(agent_dir, base, key, cons):
+        return 1
+    _report_probe(agent_dir, cons)
+    cons.info("Apply: start a new session (/new) or restart Pi")
+    return 0
 
 
 # ─── CLI ──────────────────────────────────────────────────────────────────
@@ -814,8 +893,9 @@ def main(argv: list[str] | None = None) -> int:
             "  CONFIG_REF        Branch to track (default: main)\n"
             "  LPB_GITHUB_TOKEN  GitHub token for authenticated git operations\n\n"
             "Pipeline:\n"
-            "  Detected from VERSION file or LPB_IMAGE_TAG env var.\n"
-            "  Override with --tag dev|main on any command.\n\n"
+            "  Detected via detect_pipeline(): --tag, then LPB_IMAGE_TAG env,\n"
+            "  then the devstack VERSION file, then LPB_VERSION (same as lpb-devstack).\n"
+            "  Only 'sync-pins' is pipeline-sensitive.\n\n"
             "Dev/workspace operations live in lpb-devstack:\n"
             "  lpb-devstack bump | tag-repos | workspace ... | validate | release ..."
         ),
@@ -842,16 +922,39 @@ def main(argv: list[str] | None = None) -> int:
         help="overwrite existing rendered files (merged — user keys preserved)",
     )
     _add_subparser(sub, "align", "Align settings.json extension pins to latest tags")
+    _add_subparser(
+        sub, "sync-pins",
+        "Sync settings.json extension pins to the pipeline's stack version",
+    )
 
     # First-run setup (provider + default model + memory)
     p_setup = _add_subparser(
         sub, "setup",
-        "First-run setup: lemonade provider, default model, lpb-memory config",
+        "Initial setup wizard (shared with 'lpb setup'): provider, model, memory",
     )
     p_setup.add_argument("--reconfigure", action="store_true",
                          help="reconfigure even if lemonade is already set up")
     p_setup.add_argument("--non-interactive", action="store_true",
                          help="no prompts (LEMONADE_BASE_URL/LEMONADE_API_KEY env + defaults)")
+    _add_subparser(sub, "check", "Validate the installation (read-only checklist)")
+
+    # Runtime settings (agent-readable state + non-interactive amends)
+    p_show = _add_subparser(
+        sub, "show", "Show all effective runtime settings (model, server, thinking, MCP, memory)")
+    p_show.add_argument("--json", action="store_true", help="machine-readable output")
+    _add_subparser(
+        sub, "models", "List models served by the configured Lemonade server")
+    p_set = _add_subparser(
+        sub, "set", "Change a runtime setting (model | thinking | base-url | api-key)")
+    set_sub = p_set.add_subparsers(dest="set_command")
+    p_set_model = _add_subparser(set_sub, "model", "Set the default model (validated against the live server)")
+    p_set_model.add_argument("model")
+    p_set_thinking = _add_subparser(set_sub, "thinking", "Set the default thinking level")
+    p_set_thinking.add_argument("level", choices=list(THINKING_LEVELS))
+    p_set_url = _add_subparser(set_sub, "base-url", "Set the Lemonade server URL (API key preserved)")
+    p_set_url.add_argument("url")
+    p_set_key = _add_subparser(set_sub, "api-key", "Set the Lemonade API key (server URL preserved)")
+    p_set_key.add_argument("key")
 
     # Memory config subcommand
     p_mem = sub.add_parser("memory", help="Manage lpb-memory extension config")
@@ -889,10 +992,31 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_render(agent_dir, cons, force=force)
     if args.command == "align":
         return cmd_align(agent_dir, remote, ref, cons)
+    if args.command == "sync-pins":
+        pipeline = detect_pipeline(args.tag)
+        return cmd_workspace_sync_pins(pipeline, cons)
     if args.command == "setup":
         return cmd_setup(agent_dir=agent_dir,
                          non_interactive=getattr(args, "non_interactive", False),
                          reconfigure=getattr(args, "reconfigure", False), cons=cons)
+    if args.command == "check":
+        return cmd_check(agent_dir=agent_dir, cons=cons)
+    if args.command == "show":
+        return cmd_show(agent_dir, cons, as_json=getattr(args, "json", False))
+    if args.command == "models":
+        return cmd_models(agent_dir, cons)
+    if args.command == "set":
+        set_cmd = getattr(args, "set_command", None)
+        if set_cmd == "model":
+            return cmd_set_model(agent_dir, args.model, cons)
+        if set_cmd == "thinking":
+            return cmd_set_thinking(agent_dir, args.level, cons)
+        if set_cmd == "base-url":
+            return cmd_set_base_url(agent_dir, args.url, cons)
+        if set_cmd == "api-key":
+            return cmd_set_api_key(agent_dir, args.key, cons)
+        p_set.print_help()
+        return 1
     if args.command == "memory":
         if not args.memory_command:
             p_mem.print_help()

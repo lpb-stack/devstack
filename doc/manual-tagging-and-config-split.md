@@ -1,18 +1,57 @@
 # Design: Manual Tagging & lpb-config Split
 
-**Status:** Implemented (2026-08-20) — see Implementation Notes below
-**Date:** 2026-08-20
+> **Status:** Implemented and running (since 2026-08-20)
+> **Last verified:** 2026-08-25 — tools deployed, CI active
 
 ---
 
-## Part 1: CI Changes — VERSION-Driven Pipeline
+## What's Implemented
 
-### How It Works
+### 1. Tool Split — `lpb-config` + `lpb-devstack`
 
-CI runs on **every push** to dev/main (path-filtered to code changes). A new **`VERSION_CHECK`** job determines whether the commit changed VERSION:
+Two CLI tools ship separately from the same `scripts/` source:
 
-```yaml
-Phase 0: VERSION_CHECK  — Did this commit change devstack/VERSION?
+| Tool | Location | Purpose | Ships In Image |
+|---|---|---|---|
+| `lpb-config` | `scripts/lpb-config` | Config repo management + memory config | ✅ `/opt/pi-support/lpb-config` |
+| `lpb-devstack` | `scripts/lpb-devstack` | VERSION bumping, repo tagging, workspace sync, release | ✅ `/opt/pi-support/lpb-devstack` |
+
+**`lpb-config` commands:**
+```bash
+lpb-config status          # Config repo HEAD, remote, local changes
+lpb-config update          # Fetch + fast-forward config repo (safe)
+lpb-config reset [--force] # Re-clone config repo (destructive)
+lpb-config merge           # Interactive git merge for config repo
+lpb-config align           # Sync extension pins to latest GitHub tags
+lpb-config sync-pins       # Sync settings.json extension pins to stack VERSION
+lpb-config setup           # First-run setup wizard (provider, model, memory)
+lpb-config memory show     # Show lpb-memory config
+lpb-config memory setup    # Interactive memory config wizard
+lpb-config render          # Render config from templates
+lpb-config check           # Validate the installation (read-only checklist)
+```
+
+**`lpb-devstack` commands:**
+```bash
+lpb-devstack bump                    # Bump VERSION (patch/minor/major/set)
+lpb-devstack tag-repos               # Tag 5 repos with committed VERSION
+lpb-devstack workspace status        # Branches + alignment
+lpb-devstack workspace sync          # Clone/symlink/align/pull
+lpb-devstack validate                # Full stack alignment check
+lpb-devstack release status          # Dev→stable readiness
+lpb-devstack release docs-ready      # Flag docs branch reviewed for the release
+lpb-devstack release promote         # Dev→stable merge + push
+lpb-devstack validate-hooks          # Pre-commit validation (tests + checks)
+```
+
+**Shared library:** `scripts/localpibox/stack/` — `gitutil.py`, `repos.py`, `version.py`, `workspace.py`, `validate.py`, `release.py`
+
+### 2. CI — VERSION-Driven Pipeline
+
+CI runs on every push to dev/main (path-filtered to code changes).
+
+```
+Phase 0: VERSION_CHECK  — Did this commit change VERSION?
 Phase 1: test-lpb      — Always runs (fast validation)
 Phase 2: build-cli      — Only if VERSION changed
 Phase 3: build-web      — Only if VERSION changed
@@ -20,111 +59,73 @@ Phase 4: tag-repos      — Only if VERSION changed
 Phase 5: status         — Always runs (depends on build* results)
 ```
 
-**`VERSION_CHECK`** reads the commit diff:
-```bash
-git diff-tree --no-commit-id --name-only -r "$GITHUB_SHA" | grep -q "VERSION"
-```
-
+**How `VERSION_CHECK` works:**
+- Reads commit diff with `git diff-tree --name-only -r` + fallback for merges
 - **VERSION changed** → triggers `build-cli`, `build-web`, `tag-repos`
 - **No VERSION change** → skips build/tag, only runs tests
-- **No code change** (only VERSION bump) → excluded by `paths` filter, no re-trigger
+- **VERSION-only push** → IS the release trigger (VERSION is in `paths` filter)
 
-### Key Changes to CI Jobs
+**Version reading:** Build jobs read `VERSION` file directly (not from bump-version outputs).
 
-| Job | Current | New |
-|---|---|---|
-| `bump-version` | Auto-increment + commit + push | **Removed** |
-| `build-cli` / `build-web` | `needs: [bump-version]` → reads output | `needs: [test-lpb]` + `if: needs.VERSION_CHECK.outputs.changed == 'true'` → reads VERSION file directly |
-| `tag-repos` | `needs: [build-*]` → reads bump-version output | Same needs → reads VERSION file directly |
+### Key Invariants
 
-### Version Reading in Build Jobs
+- **CI never writes VERSION.** The developer's `lpb-devstack bump` commit is
+  the only writer; build jobs read the file, they don't modify it.
+- **The bump must be the TIP of the push.** `VERSION_CHECK` diffs only the
+  pushed tip commit — commits landed after the bump make the push look
+  tests-only and the build/tag is skipped (re-bump on the new tip to recover).
+- **Devstack is tracked by VERSION, never tagged.** `tag-repos` covers the
+  other 5 repos only.
+- **Stable releases are docs-gated.** `release promote` refuses until the
+  `docs` branch carries `DOCS_READY=<stable-version>` (set by `release
+docs-ready`); the main pipeline re-verifies the flag before publishing.
 
-**Old:** `LPB_VERSION=${{ needs.bump-version.outputs.version }}`
-**New:** Read VERSION from the repo in each build step:
-```bash
-echo "LPB_VERSION=$(cat VERSION)" >> "$GITHUB_OUTPUT"
-```
+### 3. Pre-commit — Full Check Intact
 
-### CI Image Tagging (unchanged)
-
-| Trigger | Image tags |
-|---|---|
-| Push to `dev` (VERSION changed) | `:{v}-cli`, `:{v}-web`, `:dev-cli`, `:dev-web`, `:{sha}-cli`, `:{sha}-web` |
-| Push to `main` (VERSION changed) | `:{v}-cli`, `:{v}-web`, `:main-cli`, `:main-web`, `:latest-cli`, `:latest-web`, `:{sha}-cli`, `:{sha}-web` |
-| Weekly cron | `:weekly-cli`, `:weekly-web` |
-| Manual `release=true` | `:latest-cli/web` (override) |
+The pre-commit hook runs the full `test_lpb.py` suite. No changes — this is intentional
+as a safeguard against AI-generated garbage reaching the repository.
 
 ---
 
-## Part 2: Tool Split
+## Design Decisions (Implemented)
 
-### `lpb-config` — Config Repo Manager Only
+| Decision | What | Why |
+|---|---|---|
+| VERSION in `paths` filter | VERSION-only push triggers CI | Plain `lpb-devstack bump` + push is the release trigger |
+| Cron/manual always build | `VERSION_CHECK` outputs `changed=true` | Preserves weekly-cron and `:latest` dispatch behavior |
+| `_stack_lib.py` → `localpibox/stack/` | Full stack operations in package | Both CLIs stay thin (~500/~400 lines) |
+| Extensionless CLI names | `scripts/lpb-config` not `.py` | Test harness loads via `SourceFileLoader` |
+| `tag-repos` via local workspace | Uses workspace clones, not GitHub API | No raw-SHA push without local ODB objects |
+| Merge commit handling | `git diff-tree` → first-parent fallback | Merges show no diff by default |
 
-**Location:** `devstack/support/lpb-config` (installed to `/opt/pi-support/lpb-config`)
-**Purpose:** Ship inside Docker image. Manage the config repo (`~/.pi/agent/`) that lives on the host volume.
+---
 
-**Commands (minimal ~250 lines):**
-
-```
-lpb-config status          — Config repo HEAD, remote, local changes
-lpb-config update          — Fetch + fast-forward config repo (safe)
-lpb-config reset [--force] — Re-clone config repo (destructive)
-lpb-config merge           — Interactive git merge for config repo
-lpb-config align           — Sync extension pins to latest GitHub tags
-
-lpb-config memory show     — Show lpb-memory config
-lpb-config memory setup    — Interactive memory config wizard
-
-# Pipeline detection still needed (for --tag on memory/align)
-```
-
-**What's removed from lpb-config:**
-- ❌ `workspace` subcommand (branch switching, repo syncing)
-- ❌ `validate` (full stack alignment check)
-- ❌ `release` (stable promotion across repos)
-
-### `lpb-devstack` — DevOps Workspace Tool
-
-**Location:** `devstack/scripts/lpb-devstack` (installed to `/opt/pi-support/lpb-devstack`)
-**Purpose:** Available in the workspace, for developers working on the stack.
-
-**Commands:**
+## Architecture
 
 ```
-# VERSION bumping
-lpb-devstack bump                    # bump patch (0.0.57 → 0.0.58-lpb-dev)
-lpb-devstack bump --minor            # bump minor
-lpb-devstack bump --major            # bump major
-lpb-devstack bump --set 0.1.0-lpb-dev  # explicit version
-
-# Repo tagging
-lpb-devstack tag-repos               # tag 5 repos with committed VERSION
-lpb-devstack tag-repos --branch dev  # tag on dev branches
-lpb-devstack tag-repos --branch main # tag on main branches
-lpb-devstack tag-repos --version v   # explicit version
-
-# Workspace management
-lpb-devstack workspace status        — branches + alignment
-lpb-devstack workspace sync          — clone/symlink/align/pull (single write path)
-lpb-devstack workspace sync-pins     — sync settings.json pins
-
-# Stack validation
-lpb-devstack validate                — full stack alignment check
-
-# Release promotion
-lpb-devstack release status          — readiness across 6 repos
-lpb-devstack release promote         — dev→stable merge + push
-
-# Pre-commit validation
-lpb-devstack validate-hooks          — run full pre-commit checks (tests + validation)
+devstack/
+├── scripts/                          ← single source for CLIs + shared package
+│   ├── lpb-config                    ← config repo manager (~500 lines)
+│   ├── lpb-devstack                  ← DevOps workspace tool (~400 lines)
+│   ├── install.sh                    ← installs both CLIs
+│   └── localpibox/stack/             ← shared library package
+│       ├── gitutil.py
+│       ├── repos.py
+│       ├── version.py
+│       ├── workspace.py
+│       ├── validate.py
+│       └── release.py
+└── .githooks/
+    └── pre-commit                    ← full test suite (unchanged)
 ```
 
-### Tool Scope Decision Matrix
+### Scope Decision Matrix
 
 | Feature | `lpb-config` | `lpb-devstack` | Reason |
 |---|:---:|:---:|---|
 | Config repo management | ✅ | ❌ | Ships in image, needed inside container |
 | Extension pin alignment | ✅ | ❌ | Cross-repo, image-usable |
+| Extension pin sync | ✅ | ❌ | Operates on settings.json (config) |
 | Memory config | ✅ | ❌ | Image-usable, needed inside container |
 | VERSION bumping | ❌ | ✅ | Devstack-specific, workspace tool |
 | Tag repos | ❌ | ✅ | Dev-time operation |
@@ -132,97 +133,3 @@ lpb-devstack validate-hooks          — run full pre-commit checks (tests + val
 | Stack validation | ❌ | ✅ | Dev-time operation |
 | Release promote | ❌ | ✅ | Dev→stable promotion |
 | Pre-commit validation | ❌ | ✅ | Dev-time operation |
-
-### File Locations
-
-```
-devstack/
-├── support/                  ← runtime image tools (start.sh, browser*, validate.py, …)
-├── scripts/                  ← single source for the CLIs + shared package
-│   ├── lpb-config            ← config repo manager
-│   ├── lpb-devstack          ← DevOps workspace tool
-│   ├── localpibox/
-│   │   ├── stack/            ← gitutil / repos / version / workspace / validate / release
-│   │   └── ...
-│   ├── install.sh            ← installs both CLIs + localpibox (from scripts/)
-│   └── test_*                ← test suite
-└── .githooks/
-    └── pre-commit            ← keep full check (tests included)
-```
-
----
-
-## Part 3: Pre-commit — Keep Full Check
-
-The pre-commit hook runs the full `test_lpb.py` suite. This is **intentional** — it's a safeguard against AI-generated garbage reaching the repository. The 1-2 second cost is worth the protection.
-
-**No changes to pre-commit** — keep as-is with test execution.
-
----
-
-## Implementation Order
-
-1. **Create `scripts/localpibox/_stack_lib.py`** — extract shared code from lpb-config
-2. **Slim `support/lpb-config.py`** — remove workspace/release/validate, keep config repo + memory
-3. **Create `support/lpb-devstack`** — new CLI with bump, tag-repos, workspace, release
-4. **Update CI (`build-and-publish.yml`)** — add VERSION_CHECK, remove bump-version, read VERSION directly
-5. **Update `.githooks/pre-commit`** — no changes (keep full check)
-6. **Update documentation** — split docs, update SKILL.md
-7. **Update `scripts/install.sh`** — install both scripts
-
----
-
-## Implementation Notes (2026-08-20)
-
-Implemented as approved, with these deviations (each preserves the design's
-intent):
-
-1. **VERSION is in the CI `paths` filter** (not excluded). The doc bullet
-   "No code change (VERSION-only bump) → excluded by paths filter" would
-   have made a plain `lpb-devstack bump` + push a CI no-op, defeating the
-   manual-tagging flow. A VERSION-only push IS the release trigger:
-   `VERSION_CHECK` reports changed → build + tag run. Code-only pushes still
-   run tests only. (`lbp.stack.env`/`lpb.conf.env` remain excluded — they
-   ship with the next bump.)
-
-2. **Cron / manual dispatch always build.** `VERSION_CHECK` outputs
-   `changed=true` for `schedule` and `workflow_dispatch` events, preserving
-   the weekly-cron and on-demand `:latest` behavior from the doc's
-   "CI Image Tagging (unchanged)" table.
-
-3. **`_stack_lib.py` holds the full stack-operation implementations**
-   (workspace/validate/release command functions), not just git primitives
-   and repo definitions. Both CLIs stay thin (`lpb-config` ≈ 500 lines,
-   `lpb-devstack` ≈ 400), and the test suite has one patch target for all
-   stack state. The doc's line estimates (250/600) were pre-command-list.
-
-4. **`support/lpb-config.py` → `support/lpb-config`** (extensionless, per the
-   file tree). The test harness loads extensionless scripts via
-   `importlib.machinery.SourceFileLoader`. The Dockerfile COPY/symlinks and
-   `install.sh` were updated to match.
-
-5. **`lpb-devstack tag-repos` tags through the local workspace clones**
-   (fetch branch → push tag ref) instead of the GitHub API: no raw-SHA push
-   works without the objects in a local ODB, and the workspace is the tool's
-   home turf. Missing clone → clear error pointing at `workspace sync`.
-   CI's `tag-repos` job keeps the API approach (no workspace there).
-
-6. **`VERSION_CHECK` handles merge commits** — `git diff-tree` shows nothing
-   for merges by default, so it falls back to diffing against the first
-   parent.
-
-7. Fixed a latent bug in the stack-env lookup while moving it:
-   `Path("/opt/devstack/lpb.stack.") / f"{pipeline}.env"` built a bogus
-   path; now `Path("/opt/devstack") / f"lpb.stack.{pipeline}.env"`.
-
-8. Follow-up reorg (same day): `_stack_lib.py` was split into the
-   `localpibox/stack/` package (`gitutil` / `repos` / `version` /
-   `workspace` / `validate` / `release`); `_stack_lib.py` remained a thin
-   compat shim so existing imports were unchanged. `test_env_bridge.sh`
-   (previously orphaned) is wired into CI and now isolates its subshells
-   from the ambient environment.
-
-   (2026-08-21 cleanup: the compat shim was deleted — all callers import
-   from `localpibox.stack.*` directly; the CLI canonical copies moved from
-   `support/` to `scripts/` with the symlinks removed, and the Dockerfile /
-   `install.sh` point at `scripts/`.)

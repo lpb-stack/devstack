@@ -190,6 +190,54 @@ def test_lpb_config_sync_main_pipeline(tmpdir):
     assert (clone / "f").read_text() == "stable"
 
 
+def _local_branches(p):
+    return set(subprocess.run(
+        ["git", "-C", str(p), "branch", "--format", "%(refname:short)"],
+        check=True, capture_output=True, text=True,
+    ).stdout.split())
+
+
+def test_lpb_config_sync_ensures_counterpart_branch(tmpdir):
+    """Fresh clone (--branch dev) → sync also creates the local 'main' branch.
+
+    validate's fork-branch check needs BOTH local refs (pi: lpb + lpb-dev);
+    a --branch clone only has one. Sync must leave the workspace in a state
+    where validate can pass — no manual branch creation in between.
+    """
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    # A second branch on the remote (the other pipeline's branch)
+    subprocess.run(["git", "-C", str(src), "checkout", "-q", "-b", "main"], check=True)
+    (src / "f").write_text("stable")
+    subprocess.run(["git", "-C", str(src), "commit", "-qam", "stable"], check=True)
+    subprocess.run(["git", "-C", str(src), "push", "-q", "origin", "main"], check=True)
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, [("repo-a", False, False, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    clone = tmpdir / "workspace" / "repo-a"
+    assert code == 0
+    assert _branch(clone) == "dev"
+    assert {"dev", "main"} <= _local_branches(clone)  # both pipelines tracked locally
+    # Idempotent: a second sync changes nothing (config_repo=False: the agent
+    # repo from the first patch is still in place)
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, [("repo-a", False, False, "dev", "main")], config_repo=False):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    assert {"dev", "main"} <= _local_branches(clone)
+
+
+def test_lpb_config_sync_missing_counterpart_is_not_an_error(tmpdir):
+    """Remote without the counterpart branch (fresh fork) → sync still succeeds."""
+    _bare_remote(tmpdir, "repo-a", "dev")  # only 'dev' exists on the remote
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, [("repo-a", False, False, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    clone = tmpdir / "workspace" / "repo-a"
+    assert code == 0
+    assert _branch(clone) == "dev"
+    assert "main" not in _local_branches(clone)
+
+
 def main() -> int:
     return run_lpbx_suite("lpb-config workspace sync tests", globals())
 

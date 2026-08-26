@@ -10,6 +10,9 @@ import io
 import json
 import os
 import subprocess
+from unittest import mock
+
+from localpibox.setup import ProbeResult
 
 lc = _load_script('lpb_config', SCRIPTS_DIR / 'lpb-config')
 
@@ -136,6 +139,79 @@ def test_lpb_config_status_states(tmpdir):
     cons2 = log_mod.Console(color=False, out=out2, err=err2)
     assert lc.cmd_status(tmpdir / "nope", str(remote), "main", cons2) == 0
     assert "No config repo" in (out2.getvalue() + err2.getvalue())
+
+
+def _status_text(tmpdir, agent, remote):
+    out, err = io.StringIO(), io.StringIO()
+    cons = log_mod.Console(color=False, out=out, err=err)
+    assert lc.cmd_status(agent, str(remote), "main", cons) == 0
+    return out.getvalue() + err.getvalue()
+
+
+def test_lpb_config_status_ahead_not_behind(tmpdir):
+    """Local commits not pushed must report ahead, not 'behind remote'."""
+    remote = _setup_git_remote(tmpdir)
+    agent = tmpdir / "agent"
+    lc.cmd_update(agent, str(remote), "main", _quiet_console())
+    (agent / "f").write_text("local only")
+    subprocess.run(["git", "-C", str(agent), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(agent), "config", "user.name", "t"], check=True)
+    subprocess.run(["git", "-C", str(agent), "commit", "-qam", "local"], check=True)
+    text = _status_text(tmpdir, agent, remote)
+    assert "ahead of origin/main by 1" in text
+    assert "behind" not in text
+
+
+def test_lpb_config_status_behind(tmpdir):
+    remote = _setup_git_remote(tmpdir)
+    agent = tmpdir / "agent"
+    lc.cmd_update(agent, str(remote), "main", _quiet_console())
+    _push_commit(tmpdir / "work", "two", "two")
+    subprocess.run(["git", "-C", str(agent), "fetch", "-q", "origin", "main"], check=True)
+    text = _status_text(tmpdir, agent, remote)
+    assert "behind origin/main by 1" in text
+    assert "run 'lpb-config update'" in text
+    assert "ahead" not in text
+
+
+def test_lpb_config_status_up_to_date(tmpdir):
+    remote = _setup_git_remote(tmpdir)
+    agent = tmpdir / "agent"
+    lc.cmd_update(agent, str(remote), "main", _quiet_console())
+    text = _status_text(tmpdir, agent, remote)
+    assert "up to date with origin/main" in text
+
+
+def test_lpb_config_status_missing_remote_ref(tmpdir):
+    """origin/<ref> not fetched locally: no fake remote head, no crash, no 'behind'."""
+    remote = _setup_git_remote(tmpdir)
+    agent = tmpdir / "agent"
+    # .git present but no origin ref at all (ref name the remote doesn't have)
+    agent.mkdir()
+    subprocess.run(["git", "-C", str(agent), "init", "-q", "-b", "main"], check=True)
+    subprocess.run(["git", "-C", str(agent), "remote", "add", "origin", str(remote)], check=True)
+    subprocess.run(["git", "-C", str(agent), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(agent), "config", "user.name", "t"], check=True)
+    (agent / "f").write_text("x")
+    subprocess.run(["git", "-C", str(agent), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(agent), "commit", "-qm", "x"], check=True)
+    text = _status_text(tmpdir, agent, remote)
+    assert "behind" not in text
+    assert "not found locally" in text
+
+
+def test_lpb_config_status_diverged(tmpdir):
+    remote = _setup_git_remote(tmpdir)
+    agent = tmpdir / "agent"
+    lc.cmd_update(agent, str(remote), "main", _quiet_console())
+    (agent / "f").write_text("local only")
+    subprocess.run(["git", "-C", str(agent), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(agent), "config", "user.name", "t"], check=True)
+    subprocess.run(["git", "-C", str(agent), "commit", "-qam", "local"], check=True)
+    _push_commit(tmpdir / "work", "remote", "remote")
+    subprocess.run(["git", "-C", str(agent), "fetch", "-q", "origin", "main"], check=True)
+    text = _status_text(tmpdir, agent, remote)
+    assert "diverged" in text and "ahead 1" in text and "behind 1" in text
 
 
 def test_lpb_config_merge_uptodate(tmpdir):
@@ -396,6 +472,182 @@ def test_render_missing_dir_errors(tmpdir):
     cons, text = _capture_console()
     assert lc.cmd_render(tmpdir / "nope", cons) == 1
     assert "No config area" in text()
+
+
+# ─── Runtime settings: show / models / set ──────────────────────────────────
+
+def _make_agent_runtime(tmpdir):
+    """Agent dir with rendered runtime files (settings/auth/mcp/memory)."""
+    agent = tmpdir / "agent"
+    agent.mkdir()
+    (agent / "settings.json").write_text(json.dumps({
+        "packages": [
+            "git:github.com/lpb-stack/lemonade-pi-plugin@0.1.0-lpb-dev",
+            "npm:pi-mcp-adapter",
+        ],
+        "defaultProvider": "lemonade",
+        "defaultModel": "ModelA",
+        "defaultThinkingLevel": "medium",
+    }))
+    (agent / "auth.json").write_text(json.dumps({
+        "lemonade": {
+            "type": "oauth",
+            "refresh": json.dumps({"baseUrl": "http://10.0.0.5:13305",
+                                   "apiKey": "sekret", "serverName": "10.0.0.5"}),
+            "access": "sekret",
+        },
+    }))
+    (agent / "mcp.json").write_text(json.dumps({
+        "mcpServers": {"exa": {"enabled": True}, "chrome-devtools": {"enabled": False}},
+    }))
+    (agent / "lpb-memory-config.json").write_text(json.dumps({
+        "memoryMode": "legacy-inject", "memoryCharLimit": 5000, "userCharLimit": 5000,
+        "failureInjectionMaxEntries": 5, "failureInjectionMaxAgeDays": 3,
+        "llmModelOverride": "small-model",
+    }))
+    return agent
+
+
+def _ok_probe(models=("ModelA", "ModelB"), loaded=()):
+    return ProbeResult(
+        ok=True, reachable=True, auth_failed=False,
+        models=[{"id": m, "name": None, "ctx": None} for m in models],
+        loaded=set(loaded),
+    )
+
+
+def test_show_human(tmpdir):
+    agent = _make_agent_runtime(tmpdir)
+    with mock.patch.object(lc, "probe_server", return_value=_ok_probe()):
+        cons, text = _capture_console()
+        assert lc.cmd_show(agent, cons) == 0
+    text = text()
+    assert "ModelA" in text
+    assert "http://10.0.0.5:13305" in text
+    assert "reachable, 2 model(s)" in text
+    assert "exa" in text and "chrome-devtools" in text and "disabled" in text
+    assert "lemonade-pi-plugin@0.1.0-lpb-dev" in text
+    assert "legacy-inject" in text and "small-model" in text
+    assert "sekret" not in text  # API key never printed
+
+
+def test_show_json(tmpdir):
+    agent = _make_agent_runtime(tmpdir)
+    buf = io.StringIO()
+    with mock.patch.object(lc, "probe_server", return_value=_ok_probe()), \
+         mock.patch("sys.stdout", buf):
+        assert lc.cmd_show(agent, _quiet_console(), as_json=True) == 0
+    data = json.loads(buf.getvalue())
+    assert data["model"] == "ModelA"
+    assert data["provider"] == "lemonade"
+    assert data["thinkingLevel"] == "medium"
+    assert data["lemonade"]["baseUrl"] == "http://10.0.0.5:13305"
+    assert data["lemonade"]["keySet"] is True
+    assert data["lemonade"]["reachable"] is True
+    assert data["lemonade"]["models"] == 2
+    assert data["mcpServers"] == {"exa": True, "chrome-devtools": False}
+    assert data["extensionPins"]["lemonade-pi-plugin"] == "0.1.0-lpb-dev"
+    assert data["memory"]["mode"] == "legacy-inject"
+
+
+def test_show_unconfigured(tmpdir):
+    agent = tmpdir / "agent"
+    agent.mkdir()
+    (agent / "settings.json").write_text(json.dumps({"defaultModel": "X"}))
+    with mock.patch.object(lc, "probe_server") as probe:
+        cons, text = _capture_console()
+        assert lc.cmd_show(agent, cons) == 0
+    probe.assert_not_called()
+    assert "not configured" in text()
+
+
+def test_models_lists_and_marks_default(tmpdir):
+    agent = _make_agent_runtime(tmpdir)
+    with mock.patch.object(lc, "probe_server", return_value=_ok_probe(("ModelA", "ModelB"), ("ModelA",))):
+        cons, text = _capture_console()
+        assert lc.cmd_models(agent, cons) == 0
+    text = text()
+    assert "ModelA" in text and "ModelB" in text
+    assert "← default" in text and "[loaded]" in text
+
+
+def test_models_unreachable(tmpdir):
+    agent = _make_agent_runtime(tmpdir)
+    bad = ProbeResult(ok=False, reachable=False, auth_failed=False, error="connection refused")
+    with mock.patch.object(lc, "probe_server", return_value=bad):
+        cons, text = _capture_console()
+        assert lc.cmd_models(agent, cons) == 1
+    assert "connection refused" in text()
+
+
+def test_set_model_writes_and_warns_on_unknown(tmpdir):
+    agent = _make_agent_runtime(tmpdir)
+    # ModelC is not served by the mocked server → warn, but still write
+    with mock.patch.object(lc, "probe_server", return_value=_ok_probe()) as probe:
+        cons, text = _capture_console()
+        assert lc.cmd_set_model(agent, "ModelC", cons) == 0
+    s = json.loads((agent / "settings.json").read_text())
+    assert s["defaultModel"] == "ModelC"
+    assert s["defaultProvider"] == "lemonade"   # write_default_model sets provider
+    assert probe.called and "not in the server's model list" in text()
+
+
+def test_set_model_valid_no_warning(tmpdir):
+    agent = _make_agent_runtime(tmpdir)
+    with mock.patch.object(lc, "probe_server", return_value=_ok_probe()):
+        cons, text = _capture_console()
+        assert lc.cmd_set_model(agent, "ModelB", cons) == 0
+    assert json.loads((agent / "settings.json").read_text())["defaultModel"] == "ModelB"
+    assert "not in the server's model list" not in text()
+
+
+def test_set_thinking_preserves_other_keys(tmpdir):
+    agent = _make_agent_runtime(tmpdir)
+    cons, text = _capture_console()
+    assert lc.cmd_set_thinking(agent, "high", cons) == 0
+    s = json.loads((agent / "settings.json").read_text())
+    assert s["defaultThinkingLevel"] == "high"
+    assert s["defaultModel"] == "ModelA"        # untouched
+    assert s["packages"]  # untouched
+
+
+def test_set_thinking_requires_settings(tmpdir):
+    agent = tmpdir / "agent"
+    agent.mkdir()
+    cons, text = _capture_console()
+    assert lc.cmd_set_thinking(agent, "high", cons) == 1
+    assert "settings.json not found" in text()
+
+
+def test_set_base_url_preserves_key(tmpdir):
+    agent = _make_agent_runtime(tmpdir)
+    with mock.patch.object(lc, "probe_server", return_value=_ok_probe()):
+        cons, text = _capture_console()
+        assert lc.cmd_set_base_url(agent, "http://10.0.0.9:13305/v1", cons) == 0
+    auth = json.loads((agent / "auth.json").read_text())
+    refresh = json.loads(auth["lemonade"]["refresh"])
+    assert refresh["baseUrl"] == "http://10.0.0.9:13305"  # /v1 normalized away
+    assert refresh["apiKey"] == "sekret"                   # key preserved
+
+
+def test_set_api_key_preserves_url(tmpdir):
+    agent = _make_agent_runtime(tmpdir)
+    with mock.patch.object(lc, "probe_server", return_value=_ok_probe()):
+        cons, text = _capture_console()
+        assert lc.cmd_set_api_key(agent, "newkey", cons) == 0
+    auth = json.loads((agent / "auth.json").read_text())
+    refresh = json.loads(auth["lemonade"]["refresh"])
+    assert refresh["baseUrl"] == "http://10.0.0.5:13305"   # URL preserved
+    assert refresh["apiKey"] == "newkey"
+
+
+def test_set_api_key_requires_url(tmpdir):
+    agent = tmpdir / "agent"
+    agent.mkdir()
+    (agent / "settings.json").write_text(json.dumps({}))
+    cons, text = _capture_console()
+    assert lc.cmd_set_api_key(agent, "newkey", cons) == 1
+    assert "set base-url" in text()
 
 
 def main() -> int:

@@ -163,6 +163,7 @@ def reset_mock():
     MOCK_STATE["image_present"] = True
     MOCK_STATE["interactive"] = False
     MOCK_STATE["_stdout"] = ""
+    sys.stdin = _NonTTYStdin()
     global _curl_attempts
     _curl_attempts = 0
 
@@ -171,6 +172,18 @@ _module_counter = 0
 _subprocess_orig = None
 _shutil_orig = None
 _ISOLATED_HOME = tempfile.mkdtemp(prefix="lpb_test_home_")
+
+
+class _NonTTYStdin(io.StringIO):
+    """Deterministic non-interactive stdin for lpb.py tests.
+
+    Interactive prompts (SSH key selection, first-boot lemonade URL) gate on
+    sys.stdin.isatty(); defaulting to False keeps the suite from hanging when
+    run inside a terminal. Prompt tests swap in their own TTY fake.
+    """
+
+    def isatty(self) -> bool:
+        return False
 
 
 class _OutputCapture:
@@ -192,6 +205,11 @@ class _OutputCapture:
 
     def flush(self):
         pass
+
+    def isatty(self):
+        # Duck-typed stream: some helpers (localpibox.log.Console) probe
+        # isatty() to decide on color — a capture sink is never a TTY.
+        return False
 
     def __enter__(self):
         self._old = (sys.stdout, sys.stderr)
@@ -243,6 +261,12 @@ def make_module(lpb_path: str | None = None):
     spec = importlib.util.spec_from_file_location(mod_name, lpb_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+
+    # Keep the ssh-mode port checks hermetic: _run_ssh probes the real host
+    # port (bind test + connect wait). Default to a healthy port; tests that
+    # exercise the failure paths override these per-module.
+    mod._port_in_use = lambda port: False
+    mod._wait_ssh_port = lambda port, timeout=20: True
 
     return mod
 
