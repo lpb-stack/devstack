@@ -7,24 +7,37 @@ from testharness import run_lpbx_suite, _bare_remote, _quiet_console, _load_scri
 
 import os
 import subprocess
+from contextlib import ExitStack
 from unittest import mock
 
 from localpibox.stack import version as ver_mod
 from localpibox.stack import workspace as ws_mod
 from localpibox.stack import release as rel_mod
+from localpibox.stack import repos as repos_mod
 
 ld = _load_script('lpb_devstack', SCRIPTS_DIR / 'lpb-devstack')
 
 # ─── lpb-devstack: VERSION bumping ────────────────────────────────────────
 
 def _devstack_root_patch(root, tmpdir):
-    """Point stack version discovery at *root* (context manager)."""
-    return mock.patch.multiple(
-        ver_mod,
-        _DEVSTACK_ROOT=root,
-        WORKSPACE_ROOT=tmpdir / "nowhere",
-        _VERSION_FILE=None,
-    )
+    """Point stack version discovery at *root* (context manager).
+
+    Also neutralizes the dev release gate: without patching repo_path, the
+    gate inspects the *real* workspace (its own module-level roots), so a
+    dirty or unpushed local checkout would make the bump tests fail.
+    """
+    stack = ExitStack()
+    stack.enter_context(mock.patch.object(ver_mod, "_DEVSTACK_ROOT", root))
+    stack.enter_context(mock.patch.object(ver_mod, "WORKSPACE_ROOT", tmpdir / "nowhere"))
+    stack.enter_context(mock.patch.object(ver_mod, "_VERSION_FILE", None))
+    # repo_path() resolves against repos.* at call time — patch its roots so
+    # the gate finds no local clones (tests that need a fake gate repo patch
+    # rel_mod.repo_path directly, which still wins).
+    stack.enter_context(mock.patch.object(
+        repos_mod, "WORKSPACE_ROOT", tmpdir / "nowhere"))
+    stack.enter_context(mock.patch.object(
+        repos_mod, "DEFAULT_AGENT_DIR", str(tmpdir / "agent")))
+    return stack
 
 
 def test_devstack_bump_patch(tmpdir):
