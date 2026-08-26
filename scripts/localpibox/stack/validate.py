@@ -251,7 +251,7 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
                 "pi: lpb & lpb-dev both exist",
                 False,
                 f"missing local branch(es): {', '.join(missing)}",
-                "cd workspace/pi && git fetch origin && git checkout lpb-dev",
+                "lpb-devstack workspace sync (creates local tracking branches for both pipelines)",
             )
 
     # ── Summary ────────────────────────────────────────────────────────
