@@ -898,9 +898,13 @@ HELP = (
     "  lpb setup                        Initial setup wizard (all modes): server, key, model, memory\n"
     "  lpb doctor                       Validate the installation (read-only)\n"
     "  lpb --update                     Pull latest image(s) (+ self-update launcher)\n"
+    "  lpb --version                    Show the installed stack version\n"
     "  lpb --config                     Show config file location\n"
     "  lpb --help                       Show this help\n"
-    "  lpb --tag dev|main|latest        Select image pipeline (or --dev / --main)\n\n"
+    "  lpb --tag dev|main|latest        Select image pipeline (or --dev / --main)\n"
+    "  --yes                            Skip confirmation prompts (e.g. with --remove)\n"
+    "  --non-interactive                No prompts (env/defaults only)\n"
+    "  --ssh-port <PORT>                sshd port for --ssh (default: 2222)\n\n"
     "Pi passthrough (after \"--\"):\n"
     '  lpb /myproject -- -p "summarize"           # Non-interactive, process & exit\n'
     '  lpb /myproject -- --session abc123          # Resume specific session\n'
@@ -911,7 +915,11 @@ HELP = (
     "  --port <PORT>          Port (default: from .env or 3000)\n"
     "  --token <TOKEN>        Connection token (default: auto-generated)\n"
     "  --new-token            Generate a fresh token (ignore persisted one)\n"
-    "  --without-token        Hide token in URL display (server still requires auth)\n\n"
+    "  --without-token        Hide token in URL display (server still requires auth)\n"
+    "  --data-dir <DIR>       VSCodium data directory\n"
+    "  --user-data-dir <DIR>  VSCodium user data directory\n"
+    "  --ext-dir <DIR>        VSCodium extensions directory\n"
+    "  --base-path <DIR>      Base path for the editor\n\n"
     "Examples:\n"
     "  lpb /path/to/project                    Start Pi CLI at project\n"
     '  lpb /path -- -p "fix the bug"              Non-interactive pi run\n'
