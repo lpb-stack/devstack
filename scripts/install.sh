@@ -14,7 +14,12 @@ set -euo pipefail
 INSTALL_DIR="${HOME}/.local/bin"
 CONFIG_DIR="${HOME}/.lpb-stack/devstack"
 CONFIG_FILE="${CONFIG_DIR}/config"
-SCRIPT_URL="https://raw.githubusercontent.com/lpb-stack/devstack/main/scripts/lpb"
+# Source branch: main by default. Set LPB_BRANCH=dev to install the dev
+# pipeline code (e.g. the unified setup wizard) so the launcher matches
+# *-dev images:  LPB_BRANCH=dev bash install.sh
+OWNER_REPO="lpb-stack/devstack"
+BRANCH="${LPB_BRANCH:-main}"
+SCRIPT_URL="https://raw.githubusercontent.com/${OWNER_REPO}/${BRANCH}/scripts/lpb"
 
 # 1. Validate prerequisites
 for dep in curl; do
@@ -31,29 +36,28 @@ echo "Installing lpb..."
 curl -fsSL "${SCRIPT_URL}" -o "${INSTALL_DIR}/lpb"
 chmod +x "${INSTALL_DIR}/lpb"
 # The shell wrapper execs lpb.py from the same directory.
-OWNER_REPO="lpb-stack/devstack"
-curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/main/scripts/lpb.py" -o "${INSTALL_DIR}/lpb.py"
+curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/${BRANCH}/scripts/lpb.py" -o "${INSTALL_DIR}/lpb.py"
 chmod +x "${INSTALL_DIR}/lpb.py"
 # Install the canonical env defaults alongside so a plain install picks up
 # stack/repo defaults (a fork's lpb.py loads these via CONFIG_DIR fallback).
-curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/main/lpb.stack.env" -o "${CONFIG_DIR}/lpb.stack.env"
-curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/main/lpb.conf.env" -o "${CONFIG_DIR}/lpb.conf.env"
+curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/${BRANCH}/lpb.stack.env" -o "${CONFIG_DIR}/lpb.stack.env"
+curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/${BRANCH}/lpb.conf.env" -o "${CONFIG_DIR}/lpb.conf.env"
 # Installed VERSION file (source for `lpb --version`; refreshed by self-update)
-curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/main/VERSION" -o "${CONFIG_DIR}/VERSION"
+curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/${BRANCH}/VERSION" -o "${CONFIG_DIR}/VERSION"
 
 # 3b. Stack tools (config repo manager + devstack DevOps tool) and the shared
 #     localpibox package they import (resolved via ~/.lpb-stack/devstack/).
 echo "Installing lpb-config + lpb-devstack..."
 for tool in lpb-config lpb-devstack; do
-    curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/main/scripts/${tool}" -o "${INSTALL_DIR}/${tool}"
+    curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/${BRANCH}/scripts/${tool}" -o "${INSTALL_DIR}/${tool}"
     chmod +x "${INSTALL_DIR}/${tool}"
 done
 mkdir -p "${CONFIG_DIR}/localpibox/stack"
-for f in __init__.py cli.py env.py log.py run.py; do
-    curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/main/scripts/localpibox/${f}" -o "${CONFIG_DIR}/localpibox/${f}"
+for f in __init__.py cli.py env.py log.py run.py setup.py; do
+    curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/${BRANCH}/scripts/localpibox/${f}" -o "${CONFIG_DIR}/localpibox/${f}"
 done
 for f in __init__.py gitutil.py repos.py version.py workspace.py validate.py release.py; do
-    curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/main/scripts/localpibox/stack/${f}" -o "${CONFIG_DIR}/localpibox/stack/${f}"
+    curl -fsSL "https://raw.githubusercontent.com/${OWNER_REPO}/${BRANCH}/scripts/localpibox/stack/${f}" -o "${CONFIG_DIR}/localpibox/stack/${f}"
 done
 
 # 4. Add to PATH if needed (warn only, don't modify shell configs)
@@ -100,15 +104,17 @@ echo "✓ lpb installed to ${INSTALL_DIR}/lpb"
 echo "✓ lpb-config + lpb-devstack installed to ${INSTALL_DIR}/"
 echo ""
 echo "Usage examples:"
-echo "  lpb                              — Start VSCodium at ~ (pick project)"
-echo "  lpb /path/to/project              — Start VSCodium at project"
-echo "  lpb /path/to/project --port 8080  — Custom port"
-echo "  lpb --without-token               — No auth (localhost only!)"
+echo "  lpb                              — Start a Pi CLI session at ~ (pick project)"
+echo "  lpb /path/to/project              — Start a Pi CLI session at project"
+echo "  lpb /path/to/project --port 8080  — Custom VSCodium port (--web)"
+echo "  lpb --without-token               — Hide token in URL display (--web)"
 echo "  lpb --stop                        — Stop container"
 echo "  lpb --logs                        — View container logs"
 echo "  lpb --remove                      — Remove everything"
 echo ""
 echo "Stack tools:"
+echo "  lpb setup          — Initial setup wizard (server, key, model, memory)"
+echo "  lpb doctor         — Validate the installation"
 echo "  lpb-config status | update | reset | memory setup   — config repo (container/host)"
 echo "  lpb-devstack bump | tag-repos | workspace | validate | release — DevOps"
 echo ""

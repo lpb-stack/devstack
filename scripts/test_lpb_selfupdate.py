@@ -79,13 +79,19 @@ def test_self_update_branch_selection():
         ("0.0.27-lpb", "main"),        # versioned stable pin
         ("", "main"),                  # no tag → main (install default)
     ]
+    # engine + wrapper + 13 localpibox package files (+ trailing VERSION fetch)
     for tag, expected_branch in cases:
         with tempfile.TemporaryDirectory() as td:
             fetched = _run_self_update(mod, tag, td)
         expect = f"https://raw.githubusercontent.com/lpb-stack/devstack/{expected_branch}/scripts/"
-        assert len(fetched) == 2, f"tag={tag!r}: expected 2 fetches, got {fetched}"
+        non_version = [u for u in fetched if not u.endswith("/VERSION")]
+        assert len(non_version) == 2 + 13, \
+            f"tag={tag!r}: expected 15 script fetches, got {len(non_version)}: {non_version}"
         assert fetched[0] == expect + "lpb.py", f"tag={tag!r}: engine URL wrong: {fetched[0]}"
         assert fetched[1] == expect + "lpb", f"tag={tag!r}: wrapper URL wrong: {fetched[1]}"
+        # every fetch (incl. the localpibox package) must come from the right branch
+        assert all(u.startswith(expect) for u in non_version), \
+            f"tag={tag!r}: off-branch fetch: {[u for u in non_version if not u.startswith(expect)]}"
     print("  PASS\n")
 
 
@@ -117,7 +123,8 @@ def test_self_update_no_wrapper():
         _run_self_update(mod, "dev", td)
         (_P(td) / "lpb").unlink()
         fetched = _run_self_update(mod, "dev", td, create_wrapper=False)
-        assert len(fetched) == 1, f"expected engine-only fetch, got {fetched}"
+        # engine only (+ the 13 localpibox package files, re-fetched on run 2, + VERSION)
+        assert len(fetched) == 1 + 13 + 1, f"expected engine-only fetch, got {len(fetched)}: {fetched}"
         assert ( _P(td) / "lpb.py" ).read_text().startswith("NEW-CONTENT-")
     print("  PASS\n")
 

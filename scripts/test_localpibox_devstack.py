@@ -7,23 +7,37 @@ from testharness import run_lpbx_suite, _bare_remote, _quiet_console, _load_scri
 
 import os
 import subprocess
+from contextlib import ExitStack
 from unittest import mock
 
 from localpibox.stack import version as ver_mod
 from localpibox.stack import workspace as ws_mod
+from localpibox.stack import release as rel_mod
+from localpibox.stack import repos as repos_mod
 
 ld = _load_script('lpb_devstack', SCRIPTS_DIR / 'lpb-devstack')
 
 # ─── lpb-devstack: VERSION bumping ────────────────────────────────────────
 
 def _devstack_root_patch(root, tmpdir):
-    """Point stack version discovery at *root* (context manager)."""
-    return mock.patch.multiple(
-        ver_mod,
-        _DEVSTACK_ROOT=root,
-        WORKSPACE_ROOT=tmpdir / "nowhere",
-        _VERSION_FILE=None,
-    )
+    """Point stack version discovery at *root* (context manager).
+
+    Also neutralizes the dev release gate: without patching repo_path, the
+    gate inspects the *real* workspace (its own module-level roots), so a
+    dirty or unpushed local checkout would make the bump tests fail.
+    """
+    stack = ExitStack()
+    stack.enter_context(mock.patch.object(ver_mod, "_DEVSTACK_ROOT", root))
+    stack.enter_context(mock.patch.object(ver_mod, "WORKSPACE_ROOT", tmpdir / "nowhere"))
+    stack.enter_context(mock.patch.object(ver_mod, "_VERSION_FILE", None))
+    # repo_path() resolves against repos.* at call time — patch its roots so
+    # the gate finds no local clones (tests that need a fake gate repo patch
+    # rel_mod.repo_path directly, which still wins).
+    stack.enter_context(mock.patch.object(
+        repos_mod, "WORKSPACE_ROOT", tmpdir / "nowhere"))
+    stack.enter_context(mock.patch.object(
+        repos_mod, "DEFAULT_AGENT_DIR", str(tmpdir / "agent")))
+    return stack
 
 
 def test_devstack_bump_patch(tmpdir):
@@ -74,6 +88,87 @@ def test_devstack_bump_missing_version(tmpdir):
          mock.patch.object(ver_mod, "_DEVSTACK_ROOT", tmpdir / "nope"), \
          mock.patch.object(ver_mod, "WORKSPACE_ROOT", tmpdir / "nope2"):
         assert ld.cmd_bump(_quiet_console(), no_commit=True) == 1
+
+
+# ─── lpb-devstack: dev release gate (bump requires other repos pushed) ────
+
+def _gate_env(tmpdir, branch="dev"):
+    """Fake stack repo (bare remote + clean clone) + patches so the gate sees
+    only it. Returns (work, patches)."""
+    _remote, work = _bare_remote(tmpdir, "fake-repo", branch)
+    p1 = mock.patch.object(rel_mod, "TAG_REPOS", [("fake-repo", branch, "stable")])
+    p2 = mock.patch.object(rel_mod, "repo_path", lambda name: work)
+    p1.start()
+    p2.start()
+    return work, [p1, p2]
+
+
+def test_dev_release_gate_clean(tmpdir):
+    _work, patches = _gate_env(tmpdir)
+    try:
+        assert rel_mod.dev_release_gate(_quiet_console()) == 0
+    finally:
+        for p in patches:
+            p.stop()
+
+
+def test_dev_release_gate_blocks_unpushed(tmpdir):
+    work, patches = _gate_env(tmpdir)
+    try:
+        (work / "g").write_text("local only")
+        subprocess.run(["git", "-C", str(work), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(work), "commit", "-qm", "local"], check=True)
+        cons = _quiet_console()
+        assert rel_mod.dev_release_gate(cons) == 1
+        assert "unpushed" in cons.err.getvalue()
+    finally:
+        for p in patches:
+            p.stop()
+
+
+def test_dev_release_gate_blocks_uncommitted(tmpdir):
+    work, patches = _gate_env(tmpdir)
+    try:
+        (work / "f").write_text("dirty")
+        cons = _quiet_console()
+        assert rel_mod.dev_release_gate(cons) == 1
+        assert "uncommitted" in cons.err.getvalue()
+    finally:
+        for p in patches:
+            p.stop()
+
+
+def test_dev_release_gate_blocks_wrong_branch(tmpdir):
+    work, patches = _gate_env(tmpdir)
+    try:
+        subprocess.run(["git", "-C", str(work), "checkout", "-q", "-b", "feature"], check=True)
+        cons = _quiet_console()
+        assert rel_mod.dev_release_gate(cons) == 1
+        assert "expected dev" in cons.err.getvalue()
+    finally:
+        for p in patches:
+            p.stop()
+
+
+def test_devstack_bump_gate_blocks_and_force_bypasses(tmpdir):
+    root = tmpdir / "devstack"
+    root.mkdir()
+    (root / "VERSION").write_text("0.0.57-lpb-dev\n")
+    work, patches = _gate_env(tmpdir)
+    (work / "g").write_text("local only")
+    subprocess.run(["git", "-C", str(work), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(work), "commit", "-qm", "local"], check=True)
+    try:
+        with _devstack_root_patch(root, tmpdir):
+            # Gate blocks: VERSION must not be written
+            assert ld.cmd_bump(_quiet_console(), no_commit=True) == 1
+            assert (root / "VERSION").read_text().strip() == "0.0.57-lpb-dev"
+            # --force bypasses the gate
+            assert ld.cmd_bump(_quiet_console(), no_commit=True, force=True) == 0
+            assert (root / "VERSION").read_text().strip() == "0.0.58-lpb-dev"
+    finally:
+        for p in patches:
+            p.stop()
 
 
 # ─── lpb-devstack: repo tagging ───────────────────────────────────────────

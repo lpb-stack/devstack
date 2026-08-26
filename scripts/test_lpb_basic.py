@@ -6,7 +6,9 @@ Part of the lpb.py test suite (entry point: test_lpb.py).
 """
 from __future__ import annotations
 
+import os
 import sys
+import tempfile
 
 from testharness import (
     MOCK_STATE,
@@ -65,15 +67,44 @@ def test_port_invalid():
 
 
 def test_remove():
-    print("TEST: --remove")
+    """Bare non-interactive --remove must refuse (no silent partial removals)."""
+    print("TEST: --remove (non-interactive refusal)")
     reset_mock()
     MOCK_STATE["exists"] = True
     mod = make_module()
     mod.parse_cli(["--remove"])
     mod.apply_overrides()
     with _OutputCapture():
-        mod.cmd_remove()
+        try:
+            mod.cmd_remove()
+            assert False, "bare non-interactive --remove must refuse without sections/--yes"
+        except mod.DevstackError:
+            pass
+    assert MOCK_STATE["exists"], "nothing may be removed on refusal"
+    print("  PASS\n")
+
+
+def test_remove_all_yes():
+    """--remove all --yes is the scriptable full clean (no prompts)."""
+    print("TEST: --remove all --yes (full clean)")
+    reset_mock()
+    MOCK_STATE["exists"] = True
+    with tempfile.TemporaryDirectory() as td:
+        state = os.path.join(td, "state")
+        browser = os.path.join(td, "browser")
+        os.makedirs(os.path.join(state, "agent"))
+        os.makedirs(os.path.join(state, "gh-config"))
+        os.makedirs(browser)
+        mod = make_module()
+        mod.parse_cli(["--remove", "all", "--yes"])
+        mod.apply_overrides()
+        mod.cfg.state_dir = state
+        mod.cfg.browser_dir = browser
+        with _OutputCapture():
+            mod.cmd_remove()
     assert not MOCK_STATE["exists"], "container should be removed"
+    assert not os.path.exists(state), "state dir should be removed"
+    assert not os.path.exists(browser), "browser dir should be removed"
     print("  PASS\n")
 
 
@@ -259,6 +290,7 @@ TESTS = [
     test_config,
     test_port_invalid,
     test_remove,
+    test_remove_all_yes,
     test_stop_running,
     test_stop_not_running,
     test_logs_missing,

@@ -77,7 +77,7 @@ agent-browser --session "$SESSION_ID" close
 
 | Path | Purpose |
 |---|---|
-| `session-uuid` (installed at `/opt/pi-support/bin/`) | Generate unique session IDs |
+| `session-uuid` (installed at `/opt/pi-support/`) | Generate unique session IDs |
 | `/opt/pi-support/schemas/browser-validation-schema.json` | Unified JSON schema (all fields) |
 | `/opt/pi-support/config/subagent-browser-prompt.txt` | System prompt template |
 | `/opt/pi-support/validate-subagent-output.ts` | Parent-side validation utility |

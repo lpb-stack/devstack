@@ -28,7 +28,11 @@ If a value from `.env` doesn't seem to apply, check shell env first:
 | `LPB_BROWSER_DIR` | `~/.lpb-stack/agent-browser` | Host dir for browser profiles & sessions |
 | `LPB_CONTAINER_NAME` | `lpb-stack` | Container name (set in `lpb.stack.env`) |
 | `LPB_IMAGE_CLI` / `LPB_IMAGE_WEB` | `ghcr.io/lpb-stack/devstack:dev-{cli,web}` | Last-resort fallback images (forks repoint these) |
+| `LPB_LEMONADE_BASE_URL` | `http://127.0.0.1:13305/v1` | Lemonade server URL — passed to the container; on a first boot (`--ssh`/`--web`) the launcher health-checks it and prompts for the real host if unreachable |
+| `LPB_LEMONADE_API_KEY` | `lemonade` | Lemonade API key — passed to the container for the first-boot setup wizard |
 | `GHCR_USERNAME` | `lpb-stack` | Registry user for pulls |
+
+(The bare `LEMONADE_BASE_URL` / `LEMONADE_API_KEY` names are also accepted on the host; the `LPB_` form wins.)
 
 ## Runtime Defaults (baked into the image via `lpb.conf.env`)
 
@@ -136,7 +140,7 @@ export LPB_IMAGE_TAG=main
 lpb /project
 
 # Pin an exact version
-lpb --tag 0.0.55-lpb-dev /project
+lpb --tag 0.0.N-lpb-dev /project
 
 # Custom editor port (shell env wins over .env and defaults)
 export LPB_ED_PORT=8080

@@ -2,12 +2,16 @@
 
 A local-first AI development environment in a single container: the
 **Pi** coding agent, **VSCodium** editor, and **agent-browser** automation —
-powered by a Qwen model served locally through **Lemonade**. No cloud LLM
-required; your code and data stay on your machine.
+optimized for Qwen models served locally through **Lemonade**, targeting
+AMD Strix Halo hardware. No cloud LLM required; your code and data stay
+on your machine.
 
 ## Quick Start
 
 ### 1. Install the launcher (once)
+
+Prerequisite: a Linux host with **Python 3** and **Podman** or **Docker**
+(the launcher uses whichever container runtime it finds, podman first).
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/lpb-stack/devstack/main/scripts/install.sh | bash
@@ -20,22 +24,28 @@ Installs `lpb` + `lpb.py` to `~/.local/bin` (no sudo needed — make sure
 ### 2. Run it
 
 ```bash
-lpb /path/to/your/project      # Pi CLI session (foreground) in the container
+lpb /path/to/your/project      # default: Pi CLI session (foreground)
 lpb --web /path/to/your/project  # VSCodium editor (background, prints a URL)
+lpb --ssh /path/to/your/project  # sshd in the container for remote login
 lpb                              # resumes your last project (or ~)
 ```
 
-On the **first run** the container pulls the image, clones the config preset,
-generates `settings.json`, and installs the extensions. Before Pi starts, the
-**first-run setup wizard** walks you through connecting your Lemonade server:
+On the **first run** — in every mode (`lpb`, `--shell`, `--ssh`, `--web`) —
+`lpb` checks the model-provider state (stored credentials + a live probe of
+the Lemonade server). If it's missing or broken and you're on a terminal,
+the **setup wizard** runs before the container starts: config repo, server
+URL, API key, default model (from the server's live model list) and
+lpb-memory config — every step validated, with errors shown and re-asked
+until they're right. The configuration is written straight into the state
+volume, so it's persisted **before first use**; the launch summary ends with
+a model status line.
 
-1. server URL (pre-filled from `LEMONADE_BASE_URL`, health-checked)
-2. API key (a placeholder like `lemonade` is fine for a local server)
-3. default model (picked from the server's model list)
-4. lpb-memory configuration
-
-After that Pi starts fully configured. Re-run it any time inside the
-container with `lpb-config setup --reconfigure`.
+- **Non-TTY** (hosts/CI) or `lpb --non-interactive`: no wizard — the env
+  (`LPB_LEMONADE_BASE_URL` / `LPB_LEMONADE_API_KEY` / `lpb.conf.env`) is
+  passed through and the container runs a non-interactive fallback.
+- Re-run any time (all modes): `lpb setup` (wizard) and `lpb doctor`
+  (read-only validation). Inside the container the same wizard is
+  `lpb-config setup` (and `lpb-config check`).
 
 ### Common commands
 
@@ -43,8 +53,10 @@ container with `lpb-config setup --reconfigure`.
 lpb --stop       # stop the container
 lpb --logs       # stream container logs
 lpb --update     # update the launcher + pull the latest image
+lpb setup        # initial setup wizard (server, key, model, memory)
+lpb doctor       # validate the installation (read-only)
 lpb --remove     # stop, remove container + state dirs
-lpb --config     # show config file location
+lpb --config     # show config file location + model status
 lpb --help       # full usage
 ```
 
@@ -58,38 +70,35 @@ lpb --help       # full usage
 |---|---|
 | **Pi** (forked) | Coding agent CLI — local fork with Qwen reasoning + context-overflow patches |
 | **VSCodium** | Web-based editor (`:web` image), connects over the OpenVSCode protocol |
-| **lemonade-pi-plugin** (forked) | Qwen model provider — talks to the local Lemonade server |
+| **lemonade-pi-plugin** (forked) | Model provider for the local **Lemonade** server — Qwen thinking + vision support |
 | **lpb-memory** | Persistent memory + session search for the agent |
 | **pi-subagents** (forked) | Local-first subagent model registry (no hardcoded cloud models) |
 | **agent-browser** + Chrome | Browser automation tools for the agent |
 | **MCP servers** | Exa (web search), Context7 (library docs), agent-browser |
-| **Lemonade** (on host) | Local model server at `127.0.0.1:13305` (Qwen3.6-35B by default) |
+| **Lemonade** (host prerequisite) | Local model server — AMD/Strix Halo-optimized, serves GGUF models; on this host or any reachable host; model chosen by the user at setup (no default) |
 
 ## How It Works
 
 ```mermaid
-flowchart TB
-    subgraph Host
-        H1["~/projects/myproject/"]
+flowchart LR
+    subgraph Host["Host"]
+        direction TB
+        H1["your project dir"]
         H2["~/.lpb-stack/state/"]
         H3["~/.lpb-stack/agent-browser/"]
         H4["Lemonade (:13305)"]
     end
 
-    subgraph Image["Image: ghcr.io/lpb-stack/devstack"]
+    subgraph Image["ghcr.io/lpb-stack/devstack<br/>(Ubuntu 26.04 + Node.js 24)"]
         direction TB
-        I1["Ubuntu 26.04 + Node.js 24"]
-        I2["Pi monorepo (built, patched)"]
-        I3["VSCodium server (headless)"]
-        I4["Chrome (agent-browser automation)"]
-        I5["Extensions: lemonade, memory, subagents, mcp-adapter"]
-        I6["Config preset: settings, skills, agents"]
+        RT["runtime: Pi (forked, patched) + VSCodium + Chrome"]
+        CF["extensions (lemonade, memory, subagents) + config preset"]
     end
 
-    H1 -->|bind mount| I1
-    H2 -->|bind mount| I2
-    H3 -->|bind mount| I3
-    H4 -->|host network| I4
+    H1 -->|bind mount| RT
+    H2 -->|bind mount| CF
+    H3 -->|bind mount| RT
+    H4 -->|host network| RT
 ```
 
 ### Where things live
@@ -109,7 +118,8 @@ Two image flavours are published to `ghcr.io/lpb-stack/devstack`:
 - **`…-web`** — extends `-cli` with the VSCodium server
 
 CI tags images per pipeline: `:0.0.x-lpb[-dev]-cli/web` (versioned),
-`:dev-cli/web`, `:main-cli/web`, `:latest-cli/web`, `:{sha}-cli/web`.
+`:dev-cli/web`, `:main-cli/web`, `:latest-cli/web`, `:weekly-cli/web`,
+`:{sha}-cli/web`.
 
 > ⚠️ There is **no bare `:cli`, `:web`, or `:latest` tag** — pulling one
 > fails with `manifest unknown`. `lpb` always resolves a real tag for you,
@@ -122,7 +132,7 @@ CI tags images per pipeline: `:0.0.x-lpb[-dev]-cli/web` (versioned),
 | `lpb /path` | Pi CLI session (foreground); no path → last project or `~` |
 | `lpb --web /path` | VSCodium (background); `--port 8080` to change the port |
 | `lpb --shell /path` | Interactive bash inside the container |
-| `lpb --ssh [pubkey\|path] /path` | sshd server in the container for remote login (key auto-detected from `~/.ssh` when omitted) |
+| `lpb --ssh [pubkey\|path] [project]` | sshd server in the container for remote login (key auto-detected from `~/.ssh` when omitted) |
 | `lpb --ssh --ssh-password [pw]` | SSH password login (random if omitted, shown once; can combine with a key) |
 | `lpb --stop` / `--remove` / `--logs` | Stop / stop+remove+state cleanup / stream logs |
 | `lpb --update` | Self-update launcher + pull latest image for the selected pipeline |
@@ -157,6 +167,8 @@ podman exec -it lpb-stack bash
 | `pi update --extensions` | Update unpinned packages (tag-pinned packages are skipped — move a pin with `pi install git:github.com/lpb-stack/<repo>@<new-tag>`) |
 | `lpb-devstack validate` | Validate stack alignment (repos, branches, pins) |
 | `lpb-devstack bump` | Bump VERSION + commit (the release trigger for CI build/tag) |
+| `lpb-config setup` | Initial setup wizard (provider, model, memory) — the in-container twin of `lpb setup` |
+| `lpb-config check` | Validate the installation (read-only) |
 | `lpb-config memory setup` | Interactive wizard for the memory extension |
 
 Inside the Pi TUI: `/login <provider>`, `/model`, `/settings` (thinking
@@ -165,24 +177,13 @@ level, theme), `/new` (new session).
 ## Update Flow
 
 ```mermaid
-flowchart LR
-    subgraph Source["GitHub"]
-        G["push to dev or main"]
-    end
-
-    subgraph Pipeline["CI/CD"]
-        CI["GitHub Actions"]
-    end
-
-    subgraph Registry["GHCR"]
-        GHCR["ghcr.io/lpb-stack/devstack"]
-    end
-
-    subgraph Runtime["Host"]
-        PULL["lpb --update\n(pull image)"]
-        RUN["lpb (launch)"]
-        EXT["pi update --extensions\n(at boot)"]
-    end
+flowchart TB
+    G["push to dev / main\n(PR to main: tests only; weekly cron + manual: always build)"]
+    CI["GitHub Actions\ntest always — build + tag only when VERSION changed"]
+    GHCR["ghcr.io/lpb-stack/devstack\n:v-…-cli/web · :dev/main/latest-… · :sha-…"]
+    PULL["lpb --update (pull image)"]
+    RUN["lpb (launch)"]
+    EXT["pi update --extensions (at boot)"]
 
     G --> CI --> GHCR --> PULL --> RUN --> EXT
 ```
@@ -203,7 +204,7 @@ merges, so the delta vs upstream can always be extracted as one patch.
 
 | Repo | Upstream | LocalPibox work | Update policy |
 |---|---|---|---|
-| **pi** | `earendil-works/pi` (v0.84.2) | Qwen `reasoning_effort` + context-overflow patches | rebase onto new upstream releases |
+| **pi** | `earendil-works/pi` (v0.84.3) | Qwen `reasoning_effort` + context-overflow patches | rebase onto new upstream releases |
 | **lemonade-pi-plugin** | `lemonade-sdk/lemonade-pi-plugin` (no stable release) | Qwen thinking + vision support | follow upstream `main`, check periodically |
 | **pi-subagents** | `tintinweb/pi-subagents` (v0.16.1) | centralized local-first subagent model registry | follow upstream; merge + repair as needed |
 | **lpb-memory** | *(independent project)* | Pi memory extension (subprocess reviews) | no upstream to track |
@@ -248,11 +249,12 @@ publishes versioned tags plus the `:dev-*`, `:main-*`, `:latest-*` floats.
 Let `lpb` resolve the tag (`lpb --tag dev|main|<version>`), or pull e.g.
 `ghcr.io/lpb-stack/devstack:latest-web` explicitly.
 
-### No model available / login fails
+### No model available / setup failed
 
-The Lemonade server on the host must be running before Pi can list models:
-start it, then in the Pi TUI run `/lemonade refresh` (or `/login lemonade`
-again).
+The Lemonade server on the host must be running before the setup wizard can
+validate it: start it, then re-run `lpb setup` (or `lpb doctor` to see what
+is wrong). Inside a running session, `/lemonade refresh` re-syncs the model
+list once the provider is configured.
 
 ### Port already in use
 

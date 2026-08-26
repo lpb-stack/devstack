@@ -5,13 +5,17 @@ Usage:
     lpb [/path/to/project]              Start Pi CLI session at project (foreground)
     lpb /path -- <pi-args...>           Pass args through to pi (e.g. -p, --session)
     lpb --shell [/path/to/project]      Start interactive bash shell in container
-    lpb --ssh [pubkey|path] [/path]     Start sshd server (background) for remote login
-                                        (key auto-detected from ~/.ssh when omitted)
+    lpb --ssh [pubkey|path] [project]   Start sshd server (background) for remote login
+                                        (key auto-detected from ~/.ssh when omitted;
+                                         a project dir in place of a key is also accepted)
     lpb --ssh --ssh-password [pw]       SSH password login (no pw: random, shown once)
     lpb --web [/path/to/project]        Start VSCodium at project (background)
     lpb --stop                          Stop the container
-    lpb --remove                        Stop + remove container + state dirs
+    lpb --remove [sections...]          Remove parts: container, pi, gh, browser
+                                        (no sections: interactive menu, default = all)
     lpb --logs                          Stream container logs
+    lpb setup                           Run the initial setup wizard (any time)
+    lpb doctor                          Validate the installation (read-only check)
     lpb --tag dev|main|latest           Select image pipeline (dev/main/latest/<custom>)
     lpb --dev / lpb --main              Shorthand for --tag dev / --tag main
     lpb --update                        Pull latest image(s) (+ self-update launcher)
@@ -23,6 +27,8 @@ Positional command aliases (no -- needed):
     lpb update   → lpb --update
     lpb remove   → lpb --remove
     lpb config   → lpb --config
+    lpb setup    → lpb --setup
+    lpb doctor   → lpb --doctor
     lpb version  → lpb --version
     lpb help     → lpb --help
 
@@ -105,6 +111,26 @@ PROJECTS_DIR = CONFIG_DIR / "projects"
 LAST_PROJECT_FILE = CONFIG_DIR / "last-project"
 LAST_VERSION_FILE = CONFIG_DIR / "last-version"
 TOKEN_FILE = CONFIG_DIR / "token"
+
+# ─── Shared setup wizard (localpibox.setup) ──────────────────────────────
+# One wizard for every mode (cli/shell/ssh/web): configures + validates the
+# lemonade provider, default model, and lpb-memory config, writing directly
+# into the host state dir (the container's /home/lpb/.pi mount) so the
+# configuration is persisted BEFORE the first container start.
+# The import is guarded: an old install without the localpibox package can
+# still run the container (static env passthrough only).
+for _c in (Path(__file__).parent, Path(__file__).parent.parent,
+           Path("/opt/pi-support"), CONFIG_DIR):
+    if (_c / "localpibox").is_dir():
+        if str(_c) not in sys.path:
+            sys.path.insert(0, str(_c))
+        break
+try:
+    from localpibox import setup as lpb_setup          # noqa: E402
+    from localpibox.log import Console as LpbConsole   # noqa: E402
+except Exception:                                      # pragma: no cover
+    lpb_setup = None
+    LpbConsole = None
 
 # ─── Load stack configuration ────────────────────────────────────────────
 # lpb.stack.env defines build/image identity (fork URL, images, container)
@@ -343,6 +369,16 @@ class Config:
     ssh_pubkey = ""
     ssh_password = ""
     ssh_port = os.environ.get("LPB_SSH_PORT", _conf_cfg.get("LPB_SSH_PORT", "2222"))
+    # Lemonade model server — resolved by the unified setup preflight in
+    # cmd_run (all modes): interactive wizard before the first start, or
+    # static env/lpb.conf.env passthrough. Passed to the container as
+    # LPB_LEMONADE_* for the plugin and the in-container fallback setup.
+    lemonade_base_url = ""
+    lemonade_api_key = ""
+    non_interactive = False   # --non-interactive (no wizard, even on a TTY)
+    yes = False               # --yes: skip the --remove confirmation (no sections = all)
+    remove_sections = []      # --remove: section names passed as positionals
+    setup_result = None       # SetupResult from the preflight (for status display)
     pi_args = []  # args after "--" forwarded to pi inside container
 
 
@@ -375,6 +411,35 @@ def _discover_ssh_pubkeys(ssh_dir: Path | None = None) -> list[Path]:
     return sorted(p for p in d.glob("*.pub") if p.is_file())
 
 
+_SSH_KEY_PREFIXES = ("ssh-rsa", "ssh-dss", "ssh-ed25519", "ecdsa-sha2-",
+                     "sk-ecdsa-", "sk-ssh-")
+
+
+def _looks_like_pubkey(value: str) -> bool:
+    """A public key is '<type> <base64> [comment]'; type starts with a known prefix."""
+    parts = value.split()
+    return len(parts) >= 2 and parts[0].startswith(_SSH_KEY_PREFIXES)
+
+
+def _classify_ssh_key_arg(value: str) -> tuple[str, object]:
+    """Classify the optional --ssh value:
+
+      ("key", str)      inline public key
+      ("file", Path)    existing file (to read as a public key)
+      ("project", str)  existing directory — a project path was passed
+      ("invalid", str)  none of the above
+    """
+    raw = value.strip()
+    p = Path(raw).expanduser()
+    if p.is_file():
+        return "file", p
+    if _looks_like_pubkey(raw):
+        return "key", raw
+    if p.is_dir():
+        return "project", str(p)
+    return "invalid", raw
+
+
 # ── Output helpers (stdout) ───────────────────────────────────────────────────
 
 # Engine file path — resolved from __file__, NOT sys.argv[0]: the bash wrapper
@@ -384,11 +449,14 @@ LPB_ENGINE_PATH = Path(__file__).resolve()
 
 
 def _fetch_file(url: str, dest: Path, staging: Path) -> None:
-    """Download url and atomically replace dest if the content changed."""
+    """Download url and atomically replace dest if the content changed.
+
+    A missing dest is treated as "content changed" — self-update uses this to
+    install files the original (pre-package) install.sh never laid down.
+    """
     with urllib.request.urlopen(url, timeout=10) as resp:
         new_data = resp.read()
-    with open(dest, "rb") as f:
-        old_data = f.read()
+    old_data = dest.read_bytes() if dest.is_file() else None
     if new_data == old_data:
         return
     info(f"Updating {dest.name}...")
@@ -401,12 +469,19 @@ def _fetch_file(url: str, dest: Path, staging: Path) -> None:
 # ── Self-update (lpb --update) ───────────────────────────────────────────────────
 
 def self_update() -> None:
-    """Update lpb (wrapper) + lpb.py (engine) from the GitHub repo.
+    """Update lpb (wrapper) + lpb.py (engine) + the shared tools from GitHub.
 
     Source branch follows the pipeline tag: --tag dev (or a versioned
     *-dev tag) pulls from the dev branch, everything else from main — so a
     launcher installed from main can be updated from dev (and vice versa)
     simply by choosing the tag. Network/IO failures never break startup.
+
+    Also refreshes lpb-config / lpb-devstack + the localpibox package under
+    CONFIG_DIR so the host-side setup wizard (lpb setup / lpb doctor) stays
+    in sync with the engine — mirroring scripts/install.sh. The localpibox
+    package is installed unconditionally (legacy installs predate it and the
+    engine's wizard import depends on it); the standalone tools are only
+    refreshed when already present.
     """
     engine_path = LPB_ENGINE_PATH
     if not engine_path.is_file():
@@ -423,6 +498,21 @@ def self_update() -> None:
         # Wrapper (optional — only present in install.sh installs)
         if wrapper_path.is_file():
             _fetch_file(base_url + "lpb", wrapper_path, staging)
+        # Stack tools + shared package (optional — install.sh installs)
+        for tool in ("lpb-config", "lpb-devstack"):
+            tool_path = base_dir / tool
+            if tool_path.is_file():
+                _fetch_file(base_url + tool, tool_path, staging)
+        localpibox_dirs = {
+            "localpibox": ["__init__.py", "cli.py", "env.py", "log.py", "run.py", "setup.py"],
+            "localpibox/stack": ["__init__.py", "gitutil.py", "repos.py", "version.py",
+                                 "workspace.py", "validate.py", "release.py"],
+        }
+        for rel, files in localpibox_dirs.items():
+            pkg_dir = CONFIG_DIR / rel
+            pkg_dir.mkdir(parents=True, exist_ok=True)
+            for f in files:
+                _fetch_file(base_url + rel + "/" + f, pkg_dir / f, staging)
         # Keep the installed VERSION file in sync (best effort —
         # `lpb --version` reads it; only present in install.sh installs)
         version_dest = CONFIG_DIR / "VERSION"
@@ -798,16 +888,23 @@ HELP = (
     "  lpb [/path/to/project]           Start Pi CLI session at project\n"
     "  lpb /path -- <pi-args...>        Pass flags through to pi (-p, --session, etc.)\n"
     "  lpb --shell [/path/to/project]   Interactive bash shell in container\n"
-    "  lpb --ssh [pubkey|path]          Start sshd server in background (key auto-detected from ~/.ssh)\n"
+    "  lpb --ssh [pubkey|path] [project] Start sshd server in background (key auto-detected from ~/.ssh)\n"
     "  lpb --ssh --ssh-password [pw]    SSH password login (no pw: random, shown once)\n"
     "  lpb --web [/path/to/project]     Start VSCodium (background)\n"
     "  lpb --stop                       Stop the container\n"
-    "  lpb --remove                     Stop + remove container + state dirs\n"
+    "  lpb --remove [sections...]       Remove parts: container, pi, gh, browser\n"
+    "                                     (no sections: menu, default = all; --yes skips confirm)\n"
     "  lpb --logs                       Stream container logs\n"
+    "  lpb setup                        Initial setup wizard (all modes): server, key, model, memory\n"
+    "  lpb doctor                       Validate the installation (read-only)\n"
     "  lpb --update                     Pull latest image(s) (+ self-update launcher)\n"
+    "  lpb --version                    Show the installed stack version\n"
     "  lpb --config                     Show config file location\n"
     "  lpb --help                       Show this help\n"
-    "  lpb --tag dev|main|latest        Select image pipeline (or --dev / --main)\n\n"
+    "  lpb --tag dev|main|latest        Select image pipeline (or --dev / --main)\n"
+    "  --yes                            Skip confirmation prompts (e.g. with --remove)\n"
+    "  --non-interactive                No prompts (env/defaults only)\n"
+    "  --ssh-port <PORT>                sshd port for --ssh (default: 2222)\n\n"
     "Pi passthrough (after \"--\"):\n"
     '  lpb /myproject -- -p "summarize"           # Non-interactive, process & exit\n'
     '  lpb /myproject -- --session abc123          # Resume specific session\n'
@@ -818,7 +915,11 @@ HELP = (
     "  --port <PORT>          Port (default: from .env or 3000)\n"
     "  --token <TOKEN>        Connection token (default: auto-generated)\n"
     "  --new-token            Generate a fresh token (ignore persisted one)\n"
-    "  --without-token        Hide token in URL display (server still requires auth)\n\n"
+    "  --without-token        Hide token in URL display (server still requires auth)\n"
+    "  --data-dir <DIR>       VSCodium data directory\n"
+    "  --user-data-dir <DIR>  VSCodium user data directory\n"
+    "  --ext-dir <DIR>        VSCodium extensions directory\n"
+    "  --base-path <DIR>      Base path for the editor\n\n"
     "Examples:\n"
     "  lpb /path/to/project                    Start Pi CLI at project\n"
     '  lpb /path -- -p "fix the bug"              Non-interactive pi run\n'
@@ -862,8 +963,16 @@ def _build_parser() -> argparse.ArgumentParser:
                         help="Pin to version tag (e.g. 0.0.9-lpb) or show stack version")
     parser.add_argument("--stop", "-s", action="store_true")
     parser.add_argument("--remove", "-r", action="store_true")
+    parser.add_argument("--yes", "-y", action="store_true",
+                        help="Skip confirmation prompts (with --remove; no sections = remove all)")
     parser.add_argument("--logs", "-l", action="store_true")
     parser.add_argument("--update", "-u", action="store_true")
+    parser.add_argument("--setup", action="store_true",
+                        help="Run the initial setup wizard (server, key, model, memory)")
+    parser.add_argument("--doctor", action="store_true",
+                        help="Validate the installation (read-only checklist)")
+    parser.add_argument("--non-interactive", action="store_true",
+                        help="No prompts (env/defaults only; the wizard is skipped)")
     parser.add_argument("--config", "-c", action="store_true")
     parser.add_argument("--help", "-h", action="store_true")
     parser.add_argument("--", dest="_pi_args", nargs=argparse.REMAINDER)
@@ -879,7 +988,7 @@ def parse_cli(args: list[str]) -> None:
     # without requiring the -- prefix. Order matters: check commands before paths.
     POSITIONAL_COMMANDS = {"logs": "--logs", "stop": "--stop", "remove": "--remove",
                            "update": "--update", "config": "--config", "help": "--help",
-                           "version": "--version"}
+                           "version": "--version", "setup": "--setup", "doctor": "--doctor"}
     if args and args[0] in POSITIONAL_COMMANDS:
         args[0] = POSITIONAL_COMMANDS[args[0]]
 
@@ -940,6 +1049,14 @@ def parse_cli(args: list[str]) -> None:
         cfg.command = "logs"
     if known.update:
         cfg.command = "update"
+    if known.setup:
+        cfg.command = "setup"
+    if known.doctor:
+        cfg.command = "doctor"
+    if known.non_interactive:
+        cfg.non_interactive = True
+    if known.yes:
+        cfg.yes = True
     if known.config:
         cfg.command = "config"
     if known.help:
@@ -951,9 +1068,31 @@ def parse_cli(args: list[str]) -> None:
     if known.ssh is not None or known.ssh_password is not None:
         cfg.ssh_mode = cfg.shell_mode = True
         if known.ssh:
-            p = Path(known.ssh)
-            cfg.ssh_pubkey = p.read_text(encoding="utf-8").strip() if p.is_file() else known.ssh.strip()
-        elif known.ssh_password is None:
+            kind, value = _classify_ssh_key_arg(known.ssh)
+            if kind == "file":
+                key_text = value.read_text(encoding="utf-8").strip()
+                if not _looks_like_pubkey(key_text):
+                    err(f"{value} does not contain a valid public key",
+                        "Pass a .pub file, an inline key (lpb --ssh <key>), or run 'lpb --ssh' to pick from ~/.ssh")
+                    raise DevstackError
+                cfg.ssh_pubkey = key_text
+            elif kind == "key":
+                cfg.ssh_pubkey = value
+            elif kind == "project":
+                # `lpb --ssh /path/to/project`: a directory where a key was
+                # expected — use it as the project dir and fall through to
+                # the profile-key discovery below (the selection prompt shows).
+                # An explicit positional project (parsed later) still wins.
+                if not cfg.project_dir:
+                    cfg.project_dir = value
+                    info(f"Project directory from --ssh argument: {value}")
+                known.ssh = ""
+            else:
+                err(f"'{known.ssh}' is not a valid pub key, a pub key file, or a project directory",
+                    "Key:     lpb --ssh <pubkey|path-to-pub-file> — or 'lpb --ssh' alone to pick from ~/.ssh\n"
+                    "Project: pass it as a positional: lpb --dev --ssh <key> <project>")
+                raise DevstackError
+        if not cfg.ssh_pubkey and known.ssh == "" and known.ssh_password is None:
             # No explicit key — fall back to the user's profile keys.
             keys = _discover_ssh_pubkeys()
             if not keys:
@@ -1006,10 +1145,16 @@ def parse_cli(args: list[str]) -> None:
 
     # -- passthrough: first non-flag arg after -- is project, rest go to pi
     cfg.pi_args.extend(after_dash)
-    if after_dash and not cfg.project_dir and after_dash[0] and not after_dash[0].startswith("-"):
+    if (after_dash and cfg.command != "remove"
+            and not cfg.project_dir and after_dash[0] and not after_dash[0].startswith("-")):
         # First is project dir, rest are pi args
         cfg.project_dir = after_dash[0]
         cfg.pi_args.extend(after_dash[1:])
+
+    # --remove: positionals are section names, not a project directory
+    if cfg.command == "remove" and positional:
+        cfg.remove_sections = positional
+        positional = []
 
     # First positional is the project directory
     if positional:
@@ -1033,25 +1178,213 @@ def cmd_stop():
     done(f"Stopped and removed {cfg.container_name}.")
 
 
-def cmd_remove():
-    """Remove the container plus persisted state/browser data (with confirmation)."""
-    ensure_container_cmd()
-    c = client()
-    c.containers_remove(cfg.container_name)
-    dir_browser = Path(resolve_path(cfg.browser_dir))
-    for d in (Path(resolve_path(cfg.state_dir)), dir_browser):
-        if d.is_dir():
-            print(f"\nWarning: this will permanently delete stored data:")
-            print(f"  {d}")
+# ─── lpb --remove: sections ────────────────────────────────────────────────
+# The state dir is the container's /home/lpb/.pi mount and holds pi config +
+# init (agent/, .initialized, ssh-host-keys/) side by side with GitHub auth
+# (gh-config/, separately bind-mounted to /home/lpb/.config/gh). Sections let
+# the user remove each part independently — a deselected section is simply
+# kept, never an abort of the whole operation.
+REMOVE_SECTIONS = ("container", "pi", "gh", "browser")
+
+
+def _human_size(n: float) -> str:
+    """Compact human-readable size (1536 → '1.5K')."""
+    for unit in ("B", "K", "M", "G", "T"):
+        if n < 1024 or unit == "T":
+            return f"{n:.0f}{unit}" if unit == "B" else f"{n:.1f}{unit}"
+        n /= 1024
+
+
+def _dir_size(path: Path) -> int:
+    """Recursive file-size total (OSError-tolerant; 0 for absent/non-dir)."""
+    total = 0
+    for root, _dirs, files in os.walk(path, onerror=lambda e: None):
+        for name in files:
             try:
-                choice = input("Continue? [y/N]: ").strip().lower()
-            except (EOFError, KeyboardInterrupt):
-                choice = "n"
-            if choice != "y":
-                info("Aborted — nothing was removed.")
-                return
-            shutil.rmtree(d, ignore_errors=True)
-    done("Removed devstack (container, state dir, browser dir).")
+                total += os.lstat(os.path.join(root, name)).st_size
+            except OSError:
+                pass
+    return total
+
+
+def _remove_section_paths() -> tuple[Path, dict[str, list[Path]]]:
+    """(state dir, {section: existing target paths}) for remove preview/exec.
+
+    'pi' = every entry in the state dir EXCEPT gh-config/ (that is 'gh'), so
+    new infra files that land in the state dir are covered automatically.
+    """
+    state = Path(resolve_path(cfg.state_dir))
+    browser = Path(resolve_path(cfg.browser_dir))
+    pi: list[Path] = []
+    if state.is_dir():
+        pi = [e for e in sorted(state.iterdir()) if e.name != "gh-config"]
+    gh: list[Path] = []
+    gh_dir = state / "gh-config"
+    if gh_dir.is_dir():
+        gh = [gh_dir]
+    br: list[Path] = [browser] if browser.is_dir() else []
+    return state, {"pi": pi, "gh": gh, "browser": br}
+
+
+def _container_status_quiet() -> str:
+    """One-word container state for the remove preview (never raises)."""
+    try:
+        if not cfg.container_cmd:
+            cfg.container_cmd = shutil.which("podman") or shutil.which("docker") or ""
+        if not cfg.container_cmd:
+            return "no runtime found"
+        return "running" if client().container_running(cfg.container_name) else "not running"
+    except Exception:  # pragma: no cover
+        return "status unknown"
+
+
+def _parse_section_tokens(tokens: list[str]) -> list[str] | None:
+    """Validate section tokens ('all'/'*' expand); None on any unknown token."""
+    out: list[str] = []
+    for tok in tokens:
+        if tok in ("all", "*"):
+            for s in REMOVE_SECTIONS:
+                if s not in out:
+                    out.append(s)
+        elif tok in REMOVE_SECTIONS:
+            if tok not in out:
+                out.append(tok)
+        else:
+            return None
+    return out
+
+
+def _select_remove_sections(paths: dict[str, list[Path]]) -> list[str] | None:
+    """Resolve the sections to remove, in priority order:
+      1. positionals (--remove pi / lpb remove pi)
+      2. --yes → all
+      3. TTY menu (default: all; 'q' aborts → None)
+    Non-interactive with no sections and no --yes → error (no silent partials).
+    """
+    if cfg.remove_sections:
+        selected = _parse_section_tokens(cfg.remove_sections)
+        if selected is None:
+            err(f"unknown remove section in {cfg.remove_sections!r}",
+                f"valid sections: {', '.join(REMOVE_SECTIONS)} (or 'all')")
+            raise DevstackError
+        return selected
+    if cfg.yes:
+        return list(REMOVE_SECTIONS)
+    if cfg.non_interactive or not sys.stdin.isatty():
+        err("non-interactive --remove needs explicit sections",
+            "lpb --remove <" + " | ".join(REMOVE_SECTIONS) + " | all>  (add --yes to skip the confirm)")
+        raise DevstackError
+    # Interactive menu — one selection prompt instead of a cascade of y/N.
+    print()
+    print("Removable sections:")
+    for s in REMOVE_SECTIONS:
+        if s == "container":
+            print(f"  {s:<9} container '{cfg.container_name}' ({_container_status_quiet()})")
+        elif paths[s]:
+            for i, p in enumerate(paths[s]):
+                label = s if i == 0 else " " * len(s)
+                print(f"  {label:<9} {p} ({_human_size(_dir_size(p))})")
+        else:
+            print(f"  {s:<9} (absent)")
+    print()
+    try:
+        choice = input("Sections to remove (default: all, 'q' aborts): ").strip()
+    except (EOFError, KeyboardInterrupt):
+        info("Aborted — nothing was removed.")
+        return None
+    if choice in ("q", "quit", "abort"):
+        info("Aborted — nothing was removed.")
+        return None
+    tokens = choice.replace(",", " ").split()
+    if not tokens:
+        return list(REMOVE_SECTIONS)
+    selected = _parse_section_tokens(tokens)
+    if selected is None:
+        err(f"unknown section in '{choice}'",
+            f"valid sections: {', '.join(REMOVE_SECTIONS)} (or 'all')")
+        raise DevstackError
+    return selected
+
+
+def _execute_remove(requested: list[str], state: Path, paths: dict[str, list[Path]]) -> list[str]:
+    """Delete the selected sections; returns a list of failure messages."""
+    failures: list[str] = []
+    if "container" in requested:
+        ensure_container_cmd()
+        c = client()
+        if c.container_running(cfg.container_name):
+            c.containers_stop(cfg.container_name)
+        if not c.containers_remove(cfg.container_name):
+            failures.append(f"container '{cfg.container_name}' — remove failed (check '{cfg.container_cmd} ps')")
+    for s in ("pi", "gh", "browser"):
+        if s not in requested:
+            continue
+        for p in paths[s]:
+            try:
+                if p.is_symlink() or not p.is_dir():
+                    p.unlink()          # plain file (e.g. .initialized) or symlink
+                else:
+                    shutil.rmtree(p)    # directory (e.g. agent/)
+            except OSError as e:
+                failures.append(f"{s}: {p} — {e}")
+    # Both halves of the state dir removed → clean up the now-empty mount dir
+    # too (matches the old full-remove semantics: the state dir disappears).
+    if ("pi" in requested or "gh" in requested) and state.is_dir():
+        try:
+            if not any(state.iterdir()):
+                state.rmdir()
+        except OSError:  # pragma: no cover — non-empty means something survived
+            pass
+    return failures
+
+
+def cmd_remove():
+    """Remove devstack parts, section by section (container, pi, gh, browser).
+
+    bare --remove (TTY)      → interactive menu (default: all)
+    --remove <sections...>   → only those sections (pi / gh / browser / container / all)
+    --yes                    → skip the confirm (no sections = remove all)
+    One preview + one [Y/n] confirm. A 'no' at the confirm aborts everything;
+    a deselected section is simply kept.
+    """
+    state, paths = _remove_section_paths()
+    requested = _select_remove_sections(paths)
+    if requested is None:
+        return
+    kept = [s for s in REMOVE_SECTIONS if s not in requested]
+
+    print()
+    print("Will remove:")
+    for s in requested:
+        if s == "container":
+            print(f"  container  {cfg.container_name} ({_container_status_quiet()})")
+        elif paths[s]:
+            for p in paths[s]:
+                print(f"  {s:<10} {p} ({_human_size(_dir_size(p))})")
+        else:
+            print(f"  {s:<10} (absent — skipped)")
+    if kept:
+        print(f"Keeping: {', '.join(kept)}")
+    if not cfg.yes:
+        try:
+            answer = input("Confirm? [Y/n]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            answer = "n"
+        if answer not in ("", "y", "yes"):
+            info("Aborted — nothing was removed.")
+            return
+
+    failures = _execute_remove(requested, state, paths)
+    if failures:
+        for f in failures:
+            warn(f)
+        err("some sections were not fully removed",
+            "check the messages above and re-run: lpb --remove <sections>")
+        raise DevstackError
+    msg = f"Removed: {', '.join(requested)}"
+    if kept:
+        msg += f"  (kept: {', '.join(kept)})"
+    done(msg)
 
 
 def cmd_logs():
@@ -1074,6 +1407,12 @@ def cmd_config():
     info(f"Config file: {CONFIG_FILE}")
     info(f"Projects:    {PROJECTS_DIR}")
     info(f"State dir:   {resolve_path(cfg.state_dir)}")
+    if lpb_setup is not None:
+        status, msg = lpb_setup.quick_status(_agent_dir_for(resolve_path(cfg.state_dir)))
+        info(f"Model:       {status} — {msg}")
+    info("")
+    info("Setup:       lpb setup   (wizard — all modes)")
+    info("Validate:    lpb doctor  (read-only check)")
 
 
 def cmd_version():
@@ -1426,6 +1765,14 @@ def _build_run_env(mount_path: str) -> list[str]:
         f"LPB_EXA_API_KEY={os.environ.get('LPB_EXA_API_KEY', os.environ.get('EXA_API_KEY', ''))}",
         f"LPB_MAX_TOKENS_CONTEXT_RATIO={os.environ.get('LPB_MAX_TOKENS_CONTEXT_RATIO', _conf_cfg.get('LPB_MAX_TOKENS_CONTEXT_RATIO', '0.06'))}",
     ]
+    # Lemonade model server — resolved by the unified setup preflight in
+    # cmd_run (all modes): interactive wizard before a fresh start, or
+    # static env/lpb.conf.env passthrough. start.sh bridges
+    # LPB_LEMONADE_* → LEMONADE_* for the plugin and the fallback setup.
+    if cfg.lemonade_base_url:
+        env_vars.append(f"LPB_LEMONADE_BASE_URL={cfg.lemonade_base_url}")
+    if cfg.lemonade_api_key:
+        env_vars.append(f"LPB_LEMONADE_API_KEY={cfg.lemonade_api_key}")
     # GHCR token for image pulls (personal account requires auth)
     ghcr_token = os.environ.get('GHCR_TOKEN') or os.environ.get('GITHUB_TOKEN') or os.environ.get('LPB_GITHUB_TOKEN', '')
     ghcr_username = os.environ.get('GHCR_USERNAME', _conf_cfg.get('GHCR_USERNAME', 'lpb-stack'))
@@ -1609,14 +1956,85 @@ def _run_web(c: ContainerClient, project_dir: str, env_vars: list[str],
         urls = _build_urls()
         for label, url in urls.items():
             info(f"\u2713 Devstack ready at {url}")
-        info("\n  lpb --logs     \u2014 View logs")
+        _print_setup_status()
+        info("")
+        info("  lpb --logs     \u2014 View logs")
         info("  lpb --stop     \u2014 Stop")
         info("  lpb --remove   \u2014 Remove everything")
         info("  lpb            \u2014 Reconnect to last project")
     else:
         info("\u26a0 Container running but editor may not be ready yet.")
+        _print_setup_status()
         info("  Check logs:       lpb --logs")
         info(f"  Container status: {cfg.container_cmd} ps --filter name={cfg.container_name}")
+
+
+def _show_log_tail(c: ContainerClient, n: int = 15) -> None:
+    """Print the last n container log lines (indented) — failure triage.
+
+    Best-effort: any failure to read the logs is swallowed (the container
+    log is a diagnostic aid, not a gate)."""
+    try:
+        r = subprocess.run(
+            [cfg.container_cmd, "logs", "--tail", str(n), cfg.container_name],
+            capture_output=True, text=True, timeout=10,
+        )
+        lines = [l for l in (r.stdout or "").splitlines() if l.strip()]
+        if not lines:
+            return
+        for l in lines[-n:]:
+            info(f"    {l}")
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        warn("  (could not read container logs — run: lpb --logs)")
+
+
+def _port_in_use(port) -> bool:
+    """True if something already binds the given TCP port on this host."""
+    port = int(port)
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        s.bind(("0.0.0.0", port))
+        return False
+    except OSError:
+        return True
+    finally:
+        s.close()
+
+
+def _wait_ssh_port(port, timeout: int = 30) -> bool:
+    """Wait until the sshd port accepts TCP connections.
+
+    start.sh launches sshd asynchronously after the container starts, so
+    connecting right after 'run' returns is too early. The SSH banner is
+    verified — a bare connect cannot tell sshd apart from whatever else
+    holds the host port, and claiming 'ready' for a non-sshd holder would
+    repeat the silent-failure bug. Prints a progress note every 30s so a
+    long first-run wait is not mistaken for a hang."""
+    port = int(port)
+    start = time.time()
+    deadline = start + timeout
+    next_note = 30
+    while time.time() < deadline:
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=2)
+        except (socket.timeout, socket.error, OSError):
+            time.sleep(1)
+            continue
+        s.settimeout(2)
+        try:
+            banner = s.recv(64)
+        except (socket.timeout, socket.error, OSError):
+            banner = b""
+        finally:
+            s.close()
+        if banner.startswith(b"SSH-"):
+            return True
+        if time.time() - start >= next_note:
+            info(f"  ... still waiting for sshd ({int(time.time() - start)}s elapsed)")
+            next_note += 30
+        time.sleep(1)
+    return False
 
 
 def _run_ssh(c: ContainerClient, project_dir: str, env_vars: list[str],
@@ -1624,6 +2042,17 @@ def _run_ssh(c: ContainerClient, project_dir: str, env_vars: list[str],
     """SSH mode: start a detached sshd server; the user logs in remotely
     with their private key (never uploaded)."""
     info("Starting SSH server (background)...")
+    # Fail fast if the host port is taken: with --network host, sshd inside
+    # the container binds the host port directly, and daemon-mode sshd fails
+    # SILENTLY (exit 0, error to syslog which the container has no daemon
+    # for) when the port is busy — the container would come up without SSH
+    # and every log line would look fine.
+    if _port_in_use(cfg.ssh_port):
+        err(f"port {cfg.ssh_port} is already in use on the host — the SSH server cannot start",
+            "Find the holder:  ss -tlnp | grep " + str(cfg.ssh_port))
+        err("", "Stop it and re-run, or pick another port:  lpb --ssh --ssh-port <port>")
+        raise DevstackError
+
     container_id, stdout, stderr, rc = c.containers_run(
         image=cfg.image_name, name=cfg.container_name, network="host",
         env=env_vars, volumes=volumes, userns=userns, detach=True,
@@ -1644,12 +2073,42 @@ def _run_ssh(c: ContainerClient, project_dir: str, env_vars: list[str],
     host = _get_host_for_url()
     port = cfg.ssh_port
     user = "lpb"  # container user (uid 1000) is lpb
-    done("\u2713 SSH server ready (background)")
+
+    # First-run detection: the host state dir IS the container's /home/lpb/.pi
+    # mount, and start.sh creates <state>/.initialized when the bootstrap
+    # finishes. On the first boot the bootstrap (config-repo clone, volume
+    # chown, provider setup) runs BEFORE sshd starts and can take several
+    # minutes — a short wait here produced a false 'SSH server not ready'
+    # failure while the container was simply still bootstrapping.
+    first_run = not (Path(resolve_path(cfg.state_dir)) / ".initialized").exists()
+    if first_run:
+        info("First run — container is bootstrapping (config clone, provider setup)...")
+        info("  sshd starts automatically after the bootstrap; this can take a few minutes.")
+    wait_timeout = 300 if first_run else 30
+
+    # Wait for sshd to actually listen before claiming success — the SSH
+    # banner probe is the only ground truth (the host cannot see start.sh's
+    # log in detached mode).
+    if not _wait_ssh_port(port, wait_timeout):
+        warn(f"Container started but SSH port {port} is NOT accepting the SSH protocol.")
+        warn("  sshd failed to start inside the container — last container log lines:")
+        _show_log_tail(c, 15)
+        if first_run:
+            err("SSH server not ready — the first-run bootstrap may still be running (container is still alive)",
+                "Watch it finish:  lpb --logs   (sshd starts once 'First run bootstrap complete' appears)\n"
+                "Start over:       lpb --stop && lpb --ssh  (or --ssh-port <port>)")
+        else:
+            err("SSH server not ready (container is still running)",
+                "Fix the cause above, then:  lpb --stop && lpb --ssh  (or --ssh-port <port>)")
+        raise DevstackError
+
+    done(f"\u2713 SSH server ready (background) — listening on port {port}")
     info(f"  Connect:  ssh -p {port} {user}@{host}")
     if cfg.ssh_pubkey:
         info("  Auth:     key — your pubkey is in authorized_keys (private key never uploaded)")
     if cfg.ssh_password:
         info(f"  Password: {cfg.ssh_password}   \u2190 shown once; store it if you need it again")
+    _print_setup_status()
     info("")
     info("  Manage it with:")
     info("    lpb --stop      \u2014 Stop the SSH server")
@@ -1659,11 +2118,12 @@ def _run_ssh(c: ContainerClient, project_dir: str, env_vars: list[str],
 def _run_cli(project_dir: str, env_vars: list[str], volumes: list[str]) -> None:
     """CLI mode: run in the foreground with --rm (container is removed on
     exit, nothing to clean up afterwards)."""
-    info("Starting container (foreground)...\n")
     # Save last-project for reconnection
     _save_last_project(project_dir)
     # Save version from image name
     _save_version(cfg.image_name.split(":")[-1].replace("-cli", ""))
+    _print_setup_status()
+    info("\nStarting container (foreground)...")
     # Run foreground, then stop container after exit
     args = [cfg.container_cmd, "run", "--rm", "--network", "host"]
     if is_podman():
@@ -1678,6 +2138,195 @@ def _run_cli(project_dir: str, env_vars: list[str], volumes: list[str]) -> None:
         args += cfg.pi_args
     ret = subprocess.run(args, check=False).returncode
     # Container is removed (--rm), nothing to clean up
+
+
+def _config_ref_for_pipeline() -> str:
+    """Config repo branch following the selected pipeline.
+
+    dev tag (or a versioned *-dev tag) → dev branch, everything else → main.
+    The image IS the pipeline; the config repo tracks the matching branch.
+    """
+    tag = (cfg.image_tag or "").strip().lower()
+    return "dev" if tag == "dev" or tag.endswith("-dev") else "main"
+
+
+def _setup_defaults() -> tuple[str, str]:
+    """(base_url, api_key) defaults for the wizard / env passthrough:
+    shell env (LPB_ then bare name), then lpb.conf.env."""
+    base = (os.environ.get("LPB_LEMONADE_BASE_URL")
+            or os.environ.get("LEMONADE_BASE_URL")
+            or _conf_cfg.get("LPB_LEMONADE_BASE_URL", ""))
+    key = (os.environ.get("LPB_LEMONADE_API_KEY")
+           or os.environ.get("LEMONADE_API_KEY")
+           or _conf_cfg.get("LPB_LEMONADE_API_KEY", ""))
+    return base, key
+
+
+def _agent_dir_for(resolved_state: str) -> Path:
+    """Host path of the agent dir: <state dir>/agent (== container /home/lpb/.pi/agent)."""
+    return Path(resolved_state) / "agent"
+
+
+def _print_setup_status() -> None:
+    """One-line model-provider status for the launch summary (all modes)."""
+    if lpb_setup is None:
+        return
+    try:
+        status, msg = lpb_setup.quick_status(_agent_dir_for(resolve_path(cfg.state_dir)))
+    except Exception as e:
+        warn(f"Model:      status check failed ({e})")
+        return
+    if status == "ok":
+        info(f"  Model:      {msg}")
+    elif status == "broken":
+        warn(f"  Model:      {msg}")
+    else:
+        warn(f"  Model:      {msg}")
+        warn("               run 'lpb setup' to configure the model provider")
+
+
+def _setup_preflight(resolved_state: str) -> None:
+    """Unified initial-setup gate — runs before EVERY fresh container start,
+    in EVERY mode (cli, shell, ssh, web).
+
+      provider healthy (stored creds + live probe) → silent passthrough
+      provider missing/broken + TTY → interactive wizard:
+          success        → pass the validated config to the container
+          'start anyway' → warn + pass through
+          abort          → abort the launch (no container started)
+      provider missing/broken + non-TTY (or --non-interactive) → env
+          passthrough (the container runs a non-interactive fallback)
+
+    Attaching to an already-running container never triggers the wizard —
+    those paths sys.exit() in _shell_attach_or_start/_check_existing_session
+    before this point.
+    """
+    base, key = _setup_defaults()
+    cfg.lemonade_base_url = base
+    cfg.lemonade_api_key = key
+    if lpb_setup is None:
+        warn("Setup wizard unavailable — skipping initial setup validation.")
+        warn("  Re-run install.sh or 'lpb --update' to restore it.")
+        return
+
+    agent = _agent_dir_for(resolved_state)
+    status, msg = lpb_setup.quick_status(agent)
+    if status == "ok":
+        # Keep the container env in sync with the persisted configuration.
+        creds = lpb_setup.lemonade_creds(agent)
+        if creds:
+            stored_base, stored_key = lpb_setup.decode_creds(creds)
+            cfg.lemonade_base_url = stored_base
+            cfg.lemonade_api_key = stored_key
+        return
+
+    # Provider missing or broken.
+    if cfg.non_interactive or not sys.stdin.isatty():
+        info(f"Model provider {status}: {msg}")
+        info("  Configuring non-interactively from env — run 'lpb setup' for the interactive wizard.")
+        return
+
+    result = lpb_setup.run_wizard(
+        agent_dir=agent,
+        cons=LpbConsole(),
+        interactive=True,
+        default_base_url=base,
+        default_api_key=key,
+        config_remote=(os.environ.get("LPB_CONFIG_REMOTE")
+                       or _stack_cfg.get("LPB_CONFIG_FORK", "")),
+        config_ref=_config_ref_for_pipeline(),
+    )
+    cfg.setup_result = result
+    if result.aborted:
+        info("Setup aborted — no container started. Re-run 'lpb' to try again.")
+        raise DevstackError
+    if result.ok and (result.base_url or result.api_key):
+        if result.base_url:
+            cfg.lemonade_base_url = result.base_url
+        if result.api_key:
+            cfg.lemonade_api_key = result.api_key
+    else:
+        warn("Setup did not complete validation — starting anyway.")
+        for w in result.warnings:
+            warn(f"  ⚠ {w}")
+
+
+def cmd_setup():
+    """Run the initial setup wizard on demand (host side, any mode).
+
+    Config repo + lemonade provider + default model + lpb-memory config,
+    all validated live before anything is written.
+    """
+    if lpb_setup is None:
+        err("setup wizard unavailable",
+            "Re-run install.sh or 'lpb --update' to restore the localpibox package.")
+        raise DevstackError
+    resolved_state = resolve_path(cfg.state_dir)
+    os.makedirs(resolved_state, exist_ok=True)
+    interactive = not cfg.non_interactive and sys.stdin.isatty()
+    result = lpb_setup.run_wizard(
+        agent_dir=_agent_dir_for(resolved_state),
+        cons=LpbConsole(),
+        interactive=interactive,
+        default_base_url=_setup_defaults()[0],
+        default_api_key=_setup_defaults()[1],
+        config_remote=(os.environ.get("LPB_CONFIG_REMOTE")
+                       or _stack_cfg.get("LPB_CONFIG_FORK", "")),
+        config_ref=_config_ref_for_pipeline(),
+    )
+    cfg.setup_result = result
+    if result.aborted:
+        info("Setup aborted — nothing was changed.")
+        sys.exit(1)
+    if result.ok:
+        done("Setup complete.")
+        for w in result.warnings:
+            warn(f"  ⚠ {w}")
+        info("Verify any time with: lpb doctor")
+        sys.exit(0)
+    err("Setup did not complete — nothing was persisted.")
+    if result.error:
+        hint = result.error
+    else:
+        hint = "Check the errors above and re-run 'lpb setup'."
+    err("", hint)
+    sys.exit(1)
+
+
+def cmd_doctor():
+    """Validate the installation (read-only): config repo, rendered config,
+    provider credentials, live server probe, container runtime, image."""
+    if lpb_setup is None:
+        err("setup wizard unavailable",
+            "Re-run install.sh or 'lpb --update' to restore the localpibox package.")
+        raise DevstackError
+    resolved_state = resolve_path(cfg.state_dir)
+    agent = _agent_dir_for(resolved_state)
+    cons = LpbConsole()
+    rc = lpb_setup.doctor(agent_dir=agent, cons=cons, final_line=False)
+
+    # Container-side checks (launcher-specific).
+    runtime = shutil.which("podman") or shutil.which("docker") or ""
+    if runtime:
+        ver = ContainerClient(runtime).version()
+        cons.info(f"  ✓ container runtime  {Path(runtime).name}{f' {ver}' if ver else ''}")
+        cfg.container_cmd = runtime
+        _resolve_image_and_mode()  # set cfg.image_name for the active mode
+        c = client()
+        if c.images_exists(cfg.image_name):
+            cons.info(f"  ✓ image            {cfg.image_name}")
+        else:
+            cons.warn(f"  ⚠ image            {cfg.image_name} not pulled yet (pulled on start)")
+    else:
+        cons.error("  ✗ container runtime  podman/docker not found — install one")
+        rc = 1
+    cons.info("=" * 54)
+    if rc == 0:
+        done("  Installation healthy.")
+    else:
+        err("  Installation has problems — see ✗ lines above.")
+    sys.exit(rc)
+
 
 
 def cmd_run():
@@ -1718,6 +2367,13 @@ def cmd_run():
     # ── 8. Check for running Pi session ──────────────────────────────────
     _check_existing_session(c)
 
+    # ── 8b. Unified initial-setup gate — ALL modes, fresh starts only
+    #    (attach paths above have already exited). Interactive wizard on
+    #    a TTY when the provider is missing/broken; env passthrough
+    #    otherwise. Runs BEFORE the image pull so a broken setup never
+    #    pays for a pull first. ────────────────────────────────────────────
+    _setup_preflight(resolved_state)
+
     # ── 9. Pull image if needed ──────────────────────────────────────────
     _ensure_image(c)
 
@@ -1757,10 +2413,17 @@ def main() -> None:
         "remove": cmd_remove,
         "logs": cmd_logs,
         "update": cmd_update,
+        "setup": cmd_setup,
+        "doctor": cmd_doctor,
         "config": cmd_config,
         "run": cmd_run,
     }
-    handlers.get(cfg.command, cmd_run)()
+    try:
+        handlers.get(cfg.command, cmd_run)()
+    except DevstackError:
+        # Handlers print their own Error:/hint lines before raising — a clean
+        # non-zero exit, not a traceback.
+        sys.exit(1)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,10 @@
 # lpb-memory Overview
 
-The **lpb-memory** extension provides persistent, searchable memory for the
-Pi coding agent. It runs background subprocess reviews to extract lessons,
-preferences, and technical insights — making them available across sessions
-via `memory_search`.
+The **lpb-memory** extension gives the Pi coding agent persistent memory
+across sessions: a searchable store of lessons, preferences, and technical
+insights (`memory_search`), a search index over past sessions
+(`session_search`), and procedural skills the agent saves as it works
+(`skill_manage`).
 
 ## What It Does
 
@@ -19,10 +20,30 @@ session model (so nothing extra to configure), or a small dedicated model
 | **`correct`** | On user correction | Detects user corrections to AI behavior, records as lessons |
 | **`consolidate`** | Periodic | Merges similar entries (reduces duplication) |
 
+Agent-facing capabilities (beyond the background operations):
+
+| Capability | How |
+|---|---|
+| Memory search | `memory_search` tool — full-text (SQLite FTS5) search over the memory store |
+| Session search | `session_search` tool — searches indexed past sessions (one-time index: `/memory-index-sessions`) |
+| Procedural skills | `skill_manage` tool — the agent saves *how* it solved problems, reusable across sessions (`/memory-skills` lists them) |
+| Secret scanning | API keys and tokens are blocked from being saved |
+
+## Origin & Status
+
+Forked from [Pi Hermes Memory](https://github.com/chandra447/pi-hermes-memory)
+and extensively refactored to work fully locally: subprocess review transport
+that offloads background reviews to a small local model (NPU-friendly),
+model/thinking overrides for the review pass, serialized review spawning with
+backoff, and centralized configuration under `~/.pi/agent/`. It no longer
+tracks upstream and is developed as part of the
+[LocalPibox stack](https://github.com/lpb-stack/lpb-memory) — **still a work
+in progress**.
+
 ## Architecture
 
 ```
-Main Session (Qwen3.6-35B)
+Main Session (main model)
   │
   ├─ AI calls memory_search → SQLite FTS5 search
   │
@@ -122,6 +143,9 @@ nano ~/.pi/agent/lpb-memory-config.json
 cat ~/.pi/agent/lpb-memory/USER.md
 cat ~/.pi/agent/lpb-memory/MEMORY.md
 cat ~/.pi/agent/lpb-memory/failures.md
+
+# In Pi: index your past sessions once, then use the session_search tool
+/memory-index-sessions
 
 # Show current configuration
 lpb-config memory show

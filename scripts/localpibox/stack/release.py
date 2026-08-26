@@ -17,8 +17,70 @@ from ..cli import confirm
 from ..log import Console
 from ..run import run_cmd
 from .gitutil import git, git_auth
-from .repos import repo_path, stack_repos
+from .repos import TAG_REPOS, repo_path, stack_repos
 from .version import get_version
+
+
+# ─── Dev release gate ────────────────────────────────────────────────────────
+#
+# `lpb-devstack bump` is the dev release trigger: CI builds the image and
+# tags the 5 stack repos at their REMOTE dev heads. Local work that is not
+# pushed (or not even committed) would be silently left out of the release,
+# so bump refuses until every TAG_REPOS repo is on its dev branch, fully
+# pushed, and has no uncommitted tracked changes. (The docs gate applies to
+# the main pipeline only — see `release promote`.)
+
+
+def dev_release_gate(cons: Console, *, fetch: bool = True) -> int:
+    """Verify every TAG_REPOS repo is on its dev branch, pushed, committed.
+
+    Returns the number of blocking problems (0 = release may proceed).
+    Untracked files are ignored (local artifacts); a failed fetch is a
+    warning, not an error — network flakiness must not hard-block a local
+    release. Explicit refspec: some clones (e.g. config) have restricted
+    fetch configs that would not create refs/remotes/origin/<dev>.
+    """
+    problems = 0
+    cons.info("Dev release gate — all repos must be on dev, pushed, committed:")
+    for name, dev_branch, _main in TAG_REPOS:
+        path = repo_path(name)
+        if not (path / ".git").exists():
+            cons.warn(f"  ⚠️  {name}: no local clone at {path} — skipped")
+            continue
+        if fetch:
+            out, err, code = git_auth(path, "fetch", "origin", "--quiet",
+                                      f"+refs/heads/{dev_branch}:refs/remotes/origin/{dev_branch}",
+                                      timeout=120)
+            if code != 0:
+                why = (err.strip().splitlines() or ["?"])[0][:80]
+                cons.warn(f"  ⚠️  {name}: fetch failed ({why}) — push state unverified")
+                continue
+        cur, _, _ = git(path, "branch", "--show-current")
+        if cur.strip() != dev_branch:
+            cons.error(f"  ❌ {name}: on branch {cur.strip() or '(detached)'}, "
+                       f"expected {dev_branch}")
+            problems += 1
+            continue
+        out, _, code = git(path, "rev-list", "--count",
+                           f"origin/{dev_branch}..HEAD")
+        if code != 0:
+            cons.warn(f"  ⚠️  {name}: cannot compare with origin/{dev_branch} — unverified")
+            continue
+        ahead = int(out.strip() or 0)
+        dirty, _, _ = git(path, "status", "--porcelain")
+        uncommitted = [l for l in dirty.splitlines()
+                       if l.strip() and not l.startswith("??")]
+        if ahead:
+            cons.error(f"  ❌ {name}: {ahead} unpushed commit(s) on {dev_branch} — "
+                       f"push before the release (CI tags remote HEAD)")
+            problems += 1
+        elif uncommitted:
+            cons.error(f"  ❌ {name}: {len(uncommitted)} uncommitted tracked change(s) — "
+                       f"commit (or stash) before the release")
+            problems += 1
+        else:
+            cons.info(f"  ✅ {name}: on {dev_branch}, pushed, clean")
+    return problems
 
 
 # ─── Docs readiness ──────────────────────────────────────────────────────────
@@ -37,6 +99,27 @@ DOCS_READY_FILE = "DOCS_READY"
 DOCS_ONLY_FILES = frozenset({
     "mkdocs.yml", "scripts/generate.py", "DOCS.md", DOCS_READY_FILE,
 })
+# Paths on dev that are code/machinery, not site content — a change there
+# does not invalidate a docs flag (the site never builds them). Anything
+# else counts as content. support/docs/ is content even though support/
+# holds runtime tools. .pi/skills/ holds agent-facing skills — internal
+# tooling, not published on the site (kept out of the docs nav on purpose).
+_NON_CONTENT_FILES = frozenset({
+    ".dockerignore", ".env.example", ".gitignore", "Dockerfile", "VERSION",
+    "lpb.conf.env", "lpb.stack.env", "lpb.stack.dev.env", "lpb.stack.main.env",
+})
+_NON_CONTENT_DIRS = ("scripts/", ".githooks/", ".github/", ".pi/skills/")
+
+
+def _is_content(path: str) -> bool:
+    """True when a dev↔docs tree difference is site content (drift-worthy)."""
+    if path in DOCS_ONLY_FILES or path in _NON_CONTENT_FILES:
+        return False
+    if path.startswith(_NON_CONTENT_DIRS):
+        return False
+    if path.startswith("support/") and not path.startswith("support/docs/"):
+        return False
+    return True
 
 
 def _docs_preview_dir() -> Path:
@@ -53,17 +136,17 @@ def _stable_version(dev_version: str) -> str:
 
 
 def _docs_drift_files(path: Path) -> list[str]:
-    """Content files differing between origin/dev and origin/docs.
+    """Site-content files differing between origin/dev and origin/docs.
 
-    Machinery files (DOCS_ONLY_FILES) are expected to differ and are
-    filtered out; anything else means dev's doc content is not in docs.
+    Machinery (DOCS_ONLY_FILES) and code paths (_NON_CONTENT_*) never appear
+    in the site build, so they are not drift; anything else means dev's
+    doc content is not in docs.
     """
     out, _err, code = git(path, "diff", "--name-only",
                           "origin/dev", f"origin/{DOCS_BRANCH}")
     if code != 0:
         return []
-    return sorted(f for f in out.splitlines()
-                  if f and f not in DOCS_ONLY_FILES)
+    return sorted(f for f in out.splitlines() if f and _is_content(f))
 
 
 def _docs_verdict(flag: str | None, target: str, drift: list[str]) -> str:
@@ -242,6 +325,14 @@ def _repo_action(st: dict, rebase: bool) -> tuple[str, str | None]:
     return st["feasibility"], None  # ff | merge
 
 
+def _main_unique_is_version_only(path: Path, dev_b: str, main_b: str) -> bool:
+    """True when main's tree differs from dev only in VERSION (the expected
+    stable-branch strip after a promotion, until dev advances again)."""
+    out, _err, code = git(path, "diff", "--name-only",
+                          f"origin/{dev_b}", f"origin/{main_b}")
+    return code == 0 and all(f == "VERSION" for f in out.splitlines() if f)
+
+
 def _set_commit_author() -> None:
     """Force LocalPibox author identity for git commits made by this process."""
     os.environ["GIT_AUTHOR_NAME"] = "localpibox"
@@ -270,8 +361,13 @@ def cmd_release_status(cons: Console) -> int:
         elif feas == "aligned":
             mark, note = "✅", "aligned"
         elif feas == "ahead":
-            mark, note = "⚠️", f"{main_b} is AHEAD of dev — check its unique commits"
-            problems += 1
+            if label == "devstack" and _main_unique_is_version_only(path, dev_b, main_b):
+                mark, note = "✅", (f"{main_b} ahead only by the stable VERSION "
+                                    f"strip (expected after a release, until "
+                                    f"dev advances)")
+            else:
+                mark, note = "⚠️", f"{main_b} is AHEAD of dev — check its unique commits"
+                problems += 1
         elif feas == "ff":
             mark, note = "✅", f"{main_b} {st['main_behind_by']} behind → fast-forward"
         elif feas == "merge":
@@ -537,7 +633,7 @@ def cmd_release_promote(*, assume_yes: bool, dry_run: bool, rebase: bool,
     cons.info(f"CI (main pipeline) now builds :{stable_version}-* / :main-* / :latest-*")
     cons.info("and tags the 5 repos at the stable branches.")
     cons.info("After CI passes:")
-    cons.info("  1. lpb-devstack --tag main workspace sync-pins")
+    cons.info("  1. lpb-config --tag main sync-pins")
     cons.info("  2. pi update --extensions")
     cons.info(f"  (If CI's tag-repos didn't run: lpb-devstack tag-repos --branch main --version {stable_version})")
     cons.info(f"Docs: the main pipeline publishes the stable docs version "
@@ -621,9 +717,9 @@ def cmd_release_docs_ready(*, assume_yes: bool, cons: Console) -> int:
                    "python3 -m pip install --user --break-system-packages "
                    "'mkdocs-material==9.7.7' mike")
         return 1
-    cons.info("Site built — note: repo-map/versions pages are re-stamped by "
+    cons.info("Site built — note: the repo map page is re-stamped by "
               "CI after the release tags exist.")
-    cons.info(f"  preview:  cd {work} && mike serve   # http://localhost:8000")
+    cons.info(f"  preview:  cd {work} && python3 -m http.server 8000 -d site")
     if not assume_yes and not confirm(
             f"Review the site, then flag docs as ready for {target}?"):
         cons.info("Aborted — docs branch not flagged. Re-run when ready.")

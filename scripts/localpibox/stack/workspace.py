@@ -77,7 +77,8 @@ def _ensure_branch_tracked(repo_path: Path, branch: str) -> bool:
     if code != 0:
         return False
     fetched, _, fcode = git(repo_path, "rev-parse", "--verify", "FETCH_HEAD^{commit}")
-    if fcode != 0 or not fetched.strip():
+    fetched = fetched.strip()
+    if fcode != 0 or not fetched:
         return False
 
     # Clones with a restricted fetch refspec (e.g. lpb-config's shallow
@@ -150,6 +151,42 @@ def _clone_repo(name: str, dest: Path, expected: str, cons: Console) -> bool:
         shutil.rmtree(dest, ignore_errors=True)
         return False
     return True
+
+
+def _ensure_counterpart_branch(
+    name: str, path: Path, pipeline: str,
+    dev_branch: str, main_branch: str, cons: Console,
+) -> None:
+    """Ensure the OTHER pipeline's branch also exists as a local branch.
+
+    A `--branch <expected>` clone (or pi's pinned-tag checkout) only carries
+    one local branch, but `lpb-devstack validate` needs local refs for BOTH
+    (e.g. pi's `lpb` + `lpb-dev`) — so a freshly synced workspace used to
+    fail validation until the second branch was created by hand. Creating it
+    here keeps sync and validate consistent. The worktree is NOT switched:
+    only a local ref is created (a `checkout -b` would leave the repo on
+    the wrong branch). Idempotent; a branch that does not exist on origin
+    (fresh fork) is reported, not an error.
+    """
+    counterpart = main_branch if pipeline == "dev" else dev_branch
+    if git(path, "rev-parse", "--verify", f"refs/heads/{counterpart}")[2] == 0:
+        return
+    # Fetch the branch (proves it exists; updates the remote-tracking ref
+    # when the fetch refspec is unrestricted).
+    out, err, code = git_auth(path, "fetch", "origin", counterpart, timeout=120)
+    if code != 0:
+        cons.info(f"  {name}: origin/{counterpart} not found on remote — skipped")
+        return
+    if git(path, "rev-parse", "--verify", f"refs/remotes/origin/{counterpart}")[2] != 0:
+        # Restricted refspec (shallow/partial clone) — repair so the
+        # remote-tracking ref exists for --track.
+        git(path, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
+        git_auth(path, "fetch", "origin", timeout=180)
+    out, err, code = git(path, "branch", "--track", counterpart, f"origin/{counterpart}")
+    if code == 0:
+        cons.info(f"  {name}: local branch '{counterpart}' created (tracking origin)")
+    else:
+        cons.info(f"  {name}: could not create local '{counterpart}' — skipped")
 
 
 def _sync_repo(name: str, path: Path, expected: str, cons: Console) -> bool:
@@ -316,6 +353,9 @@ def cmd_workspace_sync(pipeline: str, cons: Console) -> int:
 
             if not _sync_repo(name, ext_path, expected, cons):
                 prepared = False
+                continue
+            _ensure_counterpart_branch(
+                name, ext_path, pipeline, dev_branch, main_branch, cons)
             continue
 
         # Real repos live in the workspace root
@@ -328,6 +368,9 @@ def cmd_workspace_sync(pipeline: str, cons: Console) -> int:
 
         if not _sync_repo(name, path, expected, cons):
             prepared = False
+        else:
+            _ensure_counterpart_branch(
+                name, path, pipeline, dev_branch, main_branch, cons)
 
     # Config repo (the agent dir itself)
     if not _sync_config(pipeline, cons):
@@ -439,6 +482,6 @@ def cmd_workspace_sync_pins(pipeline: str, cons: Console) -> int:
         cons.info("")
         cons.done("Extension pins updated. Run 'pi update --extensions' to apply.")
     else:
-        cons.info("Skipped. Run 'lpb-devstack workspace sync-pins' when ready.")
+        cons.info("Skipped. Run 'lpb-config sync-pins' when ready.")
 
     return 0 if not mismatches else 1

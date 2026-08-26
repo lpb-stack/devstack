@@ -19,7 +19,7 @@ Config repo management inside the container (`status` / `update` / `reset` /
 
 | Command | Description |
 |---|---|
-| `lpb-devstack bump` | Bump patch (`0.0.57-lpb-dev` → `0.0.58-lpb-dev`), commit |
+| `lpb-devstack bump` | Bump patch (`0.0.N-lpb-dev` → `0.0.N+1-lpb-dev`), commit |
 | `lpb-devstack bump --minor` | Bump minor (`0.0.9` → `0.1.0`), commit |
 | `lpb-devstack bump --major` | Bump major, commit |
 | `lpb-devstack bump --set 0.1.0-lpb-dev` | Explicit version |
@@ -51,7 +51,7 @@ partially-tagged stack is a release bug.
 |---|---|
 | `lpb-devstack workspace status` | Show branches + alignment for all repos |
 | `lpb-devstack workspace sync` | Clone missing repos, create symlinks, align branches, pull latest (the single write path) |
-| `lpb-devstack workspace sync-pins` | Sync settings.json pins to the pipeline's stack version |
+| `lpb-config sync-pins` | Sync settings.json pins to the pipeline's stack version |
 
 ### Stack Validation
 
@@ -78,8 +78,8 @@ promoting:
    `cd ~/.lpb-stack/docs-preview && mike serve`) commits
    `DOCS_READY=<stable-version>` on the `docs` branch and pushes it
 2. `release status` shows the docs verdict: `READY` / `MISSING` /
-   `STALE` (stale = flag for another version, or doc content changed on dev
-   after flagging)
+   `WRONG-VERSION` (flag for another version) / `STALE` (doc content changed
+   on dev after flagging)
 3. `release promote` **refuses** unless docs are `READY` for the version
    being released — `--force` overrides with a warning
 4. The main pipeline re-verifies the flag, then publishes the immutable
@@ -100,7 +100,7 @@ lemonade-pi-plugin):
   guidance — delete the local branch (`git branch -D <stable>`, only with
   explicit confirmation) and re-run
 - **devstack only**: strips the `-dev` VERSION suffix (e.g.
-  `0.0.58-lpb-dev` → `0.0.58-lpb`) and commits it
+  `0.0.N-lpb-dev` → `0.0.N-lpb`) and commits it
 
 Flags: `--yes` (skip confirmation), `--dry-run` (plan only), `--rebase`
 (first-release mode), `--force` (promote even if docs are not flagged
@@ -120,7 +120,7 @@ lpb-devstack --tag dev workspace sync     # sync dev pipeline repos
 ```bash
 # 1. Work happens on dev as usual (CI runs tests on every push)
 # 2. When ready to ship:
-lpb-devstack bump                 # 0.0.57-lpb-dev → 0.0.58-lpb-dev (+ commit)
+lpb-devstack bump                 # 0.0.N-lpb-dev → 0.0.N+1-lpb-dev (+ commit)
 git push origin dev               # CI sees the VERSION change → build + tag
 # 3. Verify:
 lpb-devstack workspace status
@@ -135,7 +135,7 @@ lpb-devstack release status                    # readiness check (repos + docs)
 lpb-devstack release promote --dry-run         # inspect plan
 lpb-devstack release promote                   # dev → stable + push (blocked until docs ready)
 lpb-devstack tag-repos --branch main           # tag the 5 repos on stable branches
-lpb-devstack --tag main workspace sync-pins   # pins → stable tag
+lpb-config --tag main sync-pins   # pins → stable tag
 pi update --extensions
 # CI (main pipeline) then builds images, tags repos, and publishes the
 # stable docs version (https://lpb-stack.github.io/devstack/<version>/)
