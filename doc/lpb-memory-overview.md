@@ -1,9 +1,10 @@
 # lpb-memory Overview
 
-The **lpb-memory** extension provides persistent, searchable memory for the
-Pi coding agent. It runs background subprocess reviews to extract lessons,
-preferences, and technical insights — making them available across sessions
-via `memory_search`.
+The **lpb-memory** extension gives the Pi coding agent persistent memory
+across sessions: a searchable store of lessons, preferences, and technical
+insights (`memory_search`), a search index over past sessions
+(`session_search`), and procedural skills the agent saves as it works
+(`skill_manage`).
 
 ## What It Does
 
