@@ -141,6 +141,79 @@ def test_lpb_config_status_states(tmpdir):
     assert "No config repo" in (out2.getvalue() + err2.getvalue())
 
 
+def _status_text(tmpdir, agent, remote):
+    out, err = io.StringIO(), io.StringIO()
+    cons = log_mod.Console(color=False, out=out, err=err)
+    assert lc.cmd_status(agent, str(remote), "main", cons) == 0
+    return out.getvalue() + err.getvalue()
+
+
+def test_lpb_config_status_ahead_not_behind(tmpdir):
+    """Local commits not pushed must report ahead, not 'behind remote'."""
+    remote = _setup_git_remote(tmpdir)
+    agent = tmpdir / "agent"
+    lc.cmd_update(agent, str(remote), "main", _quiet_console())
+    (agent / "f").write_text("local only")
+    subprocess.run(["git", "-C", str(agent), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(agent), "config", "user.name", "t"], check=True)
+    subprocess.run(["git", "-C", str(agent), "commit", "-qam", "local"], check=True)
+    text = _status_text(tmpdir, agent, remote)
+    assert "ahead of origin/main by 1" in text
+    assert "behind" not in text
+
+
+def test_lpb_config_status_behind(tmpdir):
+    remote = _setup_git_remote(tmpdir)
+    agent = tmpdir / "agent"
+    lc.cmd_update(agent, str(remote), "main", _quiet_console())
+    _push_commit(tmpdir / "work", "two", "two")
+    subprocess.run(["git", "-C", str(agent), "fetch", "-q", "origin", "main"], check=True)
+    text = _status_text(tmpdir, agent, remote)
+    assert "behind origin/main by 1" in text
+    assert "run 'lpb-config update'" in text
+    assert "ahead" not in text
+
+
+def test_lpb_config_status_up_to_date(tmpdir):
+    remote = _setup_git_remote(tmpdir)
+    agent = tmpdir / "agent"
+    lc.cmd_update(agent, str(remote), "main", _quiet_console())
+    text = _status_text(tmpdir, agent, remote)
+    assert "up to date with origin/main" in text
+
+
+def test_lpb_config_status_missing_remote_ref(tmpdir):
+    """origin/<ref> not fetched locally: no fake remote head, no crash, no 'behind'."""
+    remote = _setup_git_remote(tmpdir)
+    agent = tmpdir / "agent"
+    # .git present but no origin ref at all (ref name the remote doesn't have)
+    agent.mkdir()
+    subprocess.run(["git", "-C", str(agent), "init", "-q", "-b", "main"], check=True)
+    subprocess.run(["git", "-C", str(agent), "remote", "add", "origin", str(remote)], check=True)
+    subprocess.run(["git", "-C", str(agent), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(agent), "config", "user.name", "t"], check=True)
+    (agent / "f").write_text("x")
+    subprocess.run(["git", "-C", str(agent), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(agent), "commit", "-qm", "x"], check=True)
+    text = _status_text(tmpdir, agent, remote)
+    assert "behind" not in text
+    assert "not found locally" in text
+
+
+def test_lpb_config_status_diverged(tmpdir):
+    remote = _setup_git_remote(tmpdir)
+    agent = tmpdir / "agent"
+    lc.cmd_update(agent, str(remote), "main", _quiet_console())
+    (agent / "f").write_text("local only")
+    subprocess.run(["git", "-C", str(agent), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(agent), "config", "user.name", "t"], check=True)
+    subprocess.run(["git", "-C", str(agent), "commit", "-qam", "local"], check=True)
+    _push_commit(tmpdir / "work", "remote", "remote")
+    subprocess.run(["git", "-C", str(agent), "fetch", "-q", "origin", "main"], check=True)
+    text = _status_text(tmpdir, agent, remote)
+    assert "diverged" in text and "ahead 1" in text and "behind 1" in text
+
+
 def test_lpb_config_merge_uptodate(tmpdir):
     remote = _setup_git_remote(tmpdir)
     agent = tmpdir / "agent"

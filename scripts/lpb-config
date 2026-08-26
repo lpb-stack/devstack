@@ -298,7 +298,7 @@ def cmd_status(agent_dir: str | Path, remote: str, ref: str, cons: Console) -> i
         cons.warn("No remote configured")
         return 0
 
-    remote_head = git(agent_dir, "rev-parse", f"origin/{ref}")[0].strip()
+    remote_head = git(agent_dir, "rev-parse", "--verify", f"origin/{ref}")[0].strip()
     if remote_head:
         cons.info(f"Remote:      {remote_head[:8]} origin/{ref} (last fetch)")
 
@@ -311,11 +311,28 @@ def cmd_status(agent_dir: str | Path, remote: str, ref: str, cons: Console) -> i
         cons.info("Working tree: clean")
 
     if remote_head:
-        _, _, code = git(agent_dir, "merge-base", "--is-ancestor", cur, remote_head)
-        if code == 0:
-            cons.info("Status:      up to date (or ahead)")
+        out, _, code = git(agent_dir, "rev-list", "--left-right", "--count",
+                           f"HEAD...origin/{ref}")
+        if code:
+            cons.warn(f"Status:      could not compare with origin/{ref}")
         else:
-            cons.warn("Status:      behind remote — run 'lpb-config update' to fetch")
+            parts = out.split()
+            ahead_n = int(parts[0]) if len(parts) > 0 else 0
+            behind_n = int(parts[1]) if len(parts) > 1 else 0
+            if ahead_n == 0 and behind_n == 0:
+                cons.info(f"Status:      up to date with origin/{ref}")
+            elif ahead_n == 0:
+                cons.warn(f"Status:      behind origin/{ref} by {behind_n} — "
+                          f"run 'lpb-config update' to fetch")
+            elif behind_n == 0:
+                cons.info(f"Status:      ahead of origin/{ref} by {ahead_n} "
+                          f"(unpushed commit(s))")
+            else:
+                cons.warn(f"Status:      diverged from origin/{ref} (ahead {ahead_n}, "
+                          f"behind {behind_n}) — run 'lpb-config merge'")
+    else:
+        cons.warn(f"Status:      origin/{ref} not found locally — "
+                  f"run 'lpb-config update' to fetch")
     return 0
 
 
@@ -334,7 +351,7 @@ def cmd_update(agent_dir: str | Path, remote: str, ref: str, cons: Console) -> i
         cons.error(f"Failed to fetch from {remote}: {err.strip() or out.strip()}")
         return 1
 
-    remote_head = git(agent_dir, "rev-parse", f"origin/{ref}")[0].strip()
+    remote_head = git(agent_dir, "rev-parse", "--verify", f"origin/{ref}")[0].strip()
     cur_head = git(agent_dir, "rev-parse", "HEAD")[0].strip()
     if remote_head == cur_head:
         cons.info("Already up to date.")
@@ -387,7 +404,7 @@ def cmd_reset(
 
     cons.warn(f"This will destroy ALL local changes in {agent_dir}.")
     cons.raw(f"  Current: {head_short(agent_dir)}")
-    remote_head = git(agent_dir, "rev-parse", f"origin/{ref}")[0].strip()[:8]
+    remote_head = git(agent_dir, "rev-parse", "--verify", f"origin/{ref}")[0].strip()[:8]
     cons.raw(f"  Remote:  {remote_head}")
 
     if not force and not confirm("  Continue?", default=False, inp=inp):
@@ -422,7 +439,7 @@ def cmd_merge(agent_dir: str | Path, remote: str, ref: str, cons: Console) -> in
     cons.info(f"Fetching latest from {remote}...")
     git(agent_dir, "fetch", "origin", ref)
 
-    remote_head = git(agent_dir, "rev-parse", f"origin/{ref}")[0].strip()
+    remote_head = git(agent_dir, "rev-parse", "--verify", f"origin/{ref}")[0].strip()
     cur_head = git(agent_dir, "rev-parse", "HEAD")[0].strip()
     if remote_head == cur_head:
         cons.info("Already up to date.")
