@@ -43,7 +43,6 @@ CONTENT: list[tuple[str, str]] = [
     ("README.md", "index.md"),
     ("CONTRIBUTING.md", "contributing.md"),
     ("doc/fork-improvements.md", "reference/fork-improvements.md"),
-    ("doc/lpb-memory-analysis.md", "reference/lpb-memory-analysis.md"),
     ("support/docs/subagent-spawning-pattern.md", "operations/subagent-spawning-pattern.md"),
     ("doc/lpb-cli.md", "reference/lpb-cli.md"),
     ("doc/lpb-config.md", "reference/lpb-config.md"),

@@ -74,6 +74,5 @@ nav:
     - Forking & repointing: reference/forking.md
   - "Stack internals":
     - lpb-memory: reference/lpb-memory-overview.md
-    - lpb-memory analysis: reference/lpb-memory-analysis.md
     - Fork improvements: reference/fork-improvements.md
   - Contributing: contributing.md
