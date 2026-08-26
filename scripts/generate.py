@@ -45,8 +45,6 @@ CONTENT: list[tuple[str, str]] = [
     ("doc/fork-improvements.md", "reference/fork-improvements.md"),
     ("doc/lpb-memory-analysis.md", "reference/lpb-memory-analysis.md"),
     ("support/docs/subagent-spawning-pattern.md", "operations/subagent-spawning-pattern.md"),
-    (".pi/skills/localpibox-repo-workflow/SKILL.md", "reference/repo-workflow-skill.md"),
-    (".pi/skills/localpibox-docs-workflow/SKILL.md", "reference/docs-workflow-skill.md"),
     ("doc/lpb-cli.md", "reference/lpb-cli.md"),
     ("doc/lpb-config.md", "reference/lpb-config.md"),
     ("doc/lpb-devstack.md", "reference/lpb-devstack.md"),

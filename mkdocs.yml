@@ -11,6 +11,8 @@
 site_name: LocalPibox Stack
 site_description: Documentation for the LocalPibox development stack — versioned per stack tag
 site_url: https://lpb-stack.github.io/devstack/
+repo_name: lpb-stack/devstack
+repo_url: https://github.com/lpb-stack/devstack
 
 docs_dir: docs
 site_dir: site
@@ -74,6 +76,4 @@ nav:
     - lpb-memory: reference/lpb-memory-overview.md
     - lpb-memory analysis: reference/lpb-memory-analysis.md
     - Fork improvements: reference/fork-improvements.md
-    - Repo workflow skill: reference/repo-workflow-skill.md
-    - Docs workflow skill: reference/docs-workflow-skill.md
   - Contributing: contributing.md
