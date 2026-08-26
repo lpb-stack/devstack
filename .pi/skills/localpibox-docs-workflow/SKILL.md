@@ -122,8 +122,15 @@ failure means a raw code block on GitHub.
 1. `lpb-devstack release docs-ready` — merges `origin/dev` → `docs` in the
    worktree `~/.lpb-stack/docs-preview`, regenerates + builds the site, and
    (after your review) commits `DOCS_READY=<stable-version>` on `docs`.
-2. Review: `cd ~/.lpb-stack/docs-preview && mike serve` (mike 2.x has no
-   build command — `mkdocs build` for a quick check).
+2. Review the **local build**: `cd ~/.lpb-stack/docs-preview &&
+   python3 -m http.server 8000 -d site` → http://localhost:8000.
+   This serves exactly what `mkdocs build` just produced (relative URLs
+   work as-is — the `/devstack/<version>/` prefix is applied by mike at
+   deploy time, not by the local server).
+   ⚠️ **`mike serve` is NOT the review command** (mike 2.x): it serves
+   the **`gh-pages` branch** — i.e. the *last deployed* content, stale
+   for a pending release. It only accepts `-a HOST[:PORT]` (no `--port`),
+   and `python3 -m mike serve` fails (no `__main__`).
 3. `lpb-devstack release status` → verdicts: `READY` / `MISSING` /
    `WRONG-VERSION` / `STALE`.
 4. `lpb-devstack release promote` **refuses** unless `READY` (`--force`
@@ -177,7 +184,12 @@ every repo touched, and (for release) `release status` shows `READY`.
 - **Bare `end`/`class`/`click` ids** silently terminate subgraphs or throw.
 - **Linking a `doc/*.md` page not in the CONTENT map** → works on GitHub,
   404s on the site.
-- **mike 2.x** has no `mike build`; use `mkdocs build` / `mike serve`.
+- **mike 2.x** has no `mike build`; use `mkdocs build`. And `mike serve`
+  serves the **`gh-pages` branch**, not your local build — reviewing a
+  fresh build means `python3 -m http.server 8000 -d site` in the preview
+  worktree. (Verified against mike 2.2.0: `serve()` hard-codes
+  `branch='gh-pages'` and reads files via git, so it shows last-deployed
+  content — exactly the wrong thing to review pre-release.)
 - **Version stamps:** generate.py matches the devstack VERSION **exactly**
   (substring matching confuses `0.0.N-lpb` with `0.0.N-lpb-dev`).
 - **Docs branch is not a PR target** — content is merged `dev → docs` by
