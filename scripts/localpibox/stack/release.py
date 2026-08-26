@@ -102,12 +102,13 @@ DOCS_ONLY_FILES = frozenset({
 # Paths on dev that are code/machinery, not site content — a change there
 # does not invalidate a docs flag (the site never builds them). Anything
 # else counts as content. support/docs/ is content even though support/
-# holds runtime tools.
+# holds runtime tools. .pi/skills/ holds agent-facing skills — internal
+# tooling, not published on the site (kept out of the docs nav on purpose).
 _NON_CONTENT_FILES = frozenset({
     ".dockerignore", ".env.example", ".gitignore", "Dockerfile", "VERSION",
     "lpb.conf.env", "lpb.stack.env", "lpb.stack.dev.env", "lpb.stack.main.env",
 })
-_NON_CONTENT_DIRS = ("scripts/", ".githooks/", ".github/")
+_NON_CONTENT_DIRS = ("scripts/", ".githooks/", ".github/", ".pi/skills/")
 
 
 def _is_content(path: str) -> bool:

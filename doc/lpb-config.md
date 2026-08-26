@@ -21,6 +21,18 @@ see [lpb-devstack reference](lpb-devstack.md).
 | `lpb-config reset [--force]` | Re-clone config repo, destroy local changes (with confirmation) |
 | `lpb-config merge` | Open git merge flow for advanced users (conflict resolution) |
 
+### Runtime Settings
+
+| Command | Description |
+|---|---|
+| `lpb-config show [--json]` | All effective runtime settings: provider/model, thinking level, Lemonade server (reachability + model count), MCP servers, extension pins, memory config |
+| `lpb-config models` | List models served by the configured Lemonade server |
+| `lpb-config set model <id>` | Set the default model — validated against the live server's model list |
+| `lpb-config set thinking <level>` | Set the default thinking level (`off` … `max`) |
+| `lpb-config set base-url <url>` | Set the Lemonade server URL (API key preserved) |
+| `lpb-config set api-key <key>` | Set the Lemonade API key (server preserved) |
+| `lpb-config render [--force]` | Regenerate runtime config from the repo templates (`--force` merges: user-added keys survive, template pins win in settings.json) |
+
 ### Align & Pin Sync
 
 | Command | Description |
@@ -119,4 +131,13 @@ lpb-config memory setup
 # Run / validate the initial setup
 lpb-config setup
 lpb-config check
+
+# Show all effective runtime settings
+lpb-config show
+
+# Switch model / thinking level / server
+lpb-config models
+lpb-config set model <id>
+lpb-config set thinking <level>
+lpb-config set base-url <url>
 ```

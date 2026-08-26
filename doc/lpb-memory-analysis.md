@@ -1,4 +1,9 @@
-# lpb-memory Extension — Current Status
+# lpb-memory Extension — Status Snapshot
+
+> ⚠️ **Point-in-time snapshot (2026-08-25).** A diagnostic of the live
+> configuration at that date — settings may have changed since. For the
+> current feature and configuration reference see the
+> [lpb-memory overview](lpb-memory-overview.md).
 
 > **Last updated:** 2026-08-25
 > **Status:** Active — memory writes and reads working
