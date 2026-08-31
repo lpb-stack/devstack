@@ -30,8 +30,10 @@ def test_stack_detect_pipeline_env_tag():
 
 
 def test_stack_expected_branch():
-    assert expected_branch("pi", "dev") == "lpb-dev"
-    assert expected_branch("pi", "main") == "lpb"
+    # pi is no longer a stack repo (de-forked 2026-08-31 — mainstream pi
+    # installs from the npm registry at LPB_PI_VERSION)
+    assert expected_branch("pi", "dev") == ""
+    assert expected_branch("pi", "main") == ""
     assert expected_branch("devstack", "dev") == "dev"
     assert expected_branch("devstack", "main") == "main"
     assert expected_branch("config", "dev") == "dev"

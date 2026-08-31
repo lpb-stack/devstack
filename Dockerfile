@@ -10,9 +10,11 @@
 #   docker build --target cli  -t ghcr.io/lpb-stack/devstack:cli  .
 #   docker build --target web  -t ghcr.io/lpb-stack/devstack:web  .
 #
-# Fork configuration: lpb.stack.env (project root)
+# Pi configuration: lpb.stack.env (project root)
 #   Sourced at build time to populate ARG defaults:
-#   LPB_PI_FORK, LPB_PI_REF, LPB_NODE_VERSION, LPB_VSCODIUM_VERSION
+#   LPB_PI_VERSION, LPB_NODE_VERSION, LPB_VSCODIUM_VERSION
+#   (pi installs from the npm registry at a pinned mainstream version —
+#   no fork; see lpb.stack.env comments for the 2026-08-31 de-fork)
 #
 # NOTE: Runtime extensions (lemonade-pi-plugin, lpb-memory) are NOT
 #       built into the image. They are installed at container startup by
@@ -27,8 +29,7 @@
 # NOTE: Docker ARG values can't reference source'd shell variables.
 ARG NODE_VERSION=24
 ARG VSCODIUM_VERSION=1.126.04524
-ARG PI_FORK=https://github.com/lpb-stack/pi.git
-ARG PI_REF=lpb
+ARG PI_VERSION=0.84.4
 ARG PI_HEAD_SHA=unknown
 
 # Config preset repo — baked so start.sh clones the fork's config at boot.
@@ -116,41 +117,30 @@ RUN --mount=type=cache,target=/home/lpb/.npm \
     npm config set fetch-retry-maxtimeout 120000; \
     npm config set fetch-timeout 300000; \
     npm config set registry https://registry.npmjs.org/; \
-    printf 'allow-scripts=better-sqlite3\nallow-scripts=agent-browser\nallow-scripts=esbuild\nallow-scripts=protobufjs\nallow-scripts=@google/genai\n' > /home/lpb/.npmrc; \
+    # Single comma-separated list — npm only reads the last value when a key
+    # is repeated in .npmrc; this is written for both the build user (root)
+    # and the runtime user (lpb). The mainstream pi packages do NOT declare
+    # `allowScripts` (that was a fork-only addition — fork commit 2a3e9bcb8);
+    # allow-scripts are managed here, independently, by devstack.
+    printf 'allow-scripts=better-sqlite3,agent-browser,esbuild,protobufjs,@google/genai\n' > /home/lpb/.npmrc; \
+    printf 'allow-scripts=better-sqlite3,agent-browser,esbuild,protobufjs,@google/genai\n' >> /root/.npmrc; \
     npm install -g zod@3 agent-browser exa-mcp-server; \
     chown -R 1000:1000 /home/lpb/.npm-global
 
-# ── Pi monorepo build ───────────────────────────────────────────────────────
+# ── Pi (mainstream, pinned npm version) ─────────────────────────────────
+# One package pulls in pi-ai/pi-tui/pi-agent-core/pi-client as dependencies.
+# Mainstream pi packages do NOT declare allowScripts (fork-only addition;
+# fork commit 2a3e9bcb8). devstack manages allow-scripts independently via the
+# .npmrc comma-separated whitelist above (written for both root and lpb user).
+# A source build for a forked pi is re-introduced only if strictly needed
+# — see docs/reference/forking.md.
 RUN set -eux; \
     export PATH="/home/lpb/.npm-global/bin:${PATH}"; \
-    mkdir -p /opt/pi-src && cd /opt/pi-src; \
-    git clone --branch ${PI_REF} ${PI_FORK} .; \
-    git fetch origin ${PI_REF}; \
-    git checkout ${PI_REF}; \
-    git config user.email "build@lpb-stack.dev"; \
-    git config user.name "LocalPibox Build"; \
-    npm install; \
-    ln -sf "$(pwd)/node_modules/@typescript/native-preview-linux-x64/lib/tsgo" "$(pwd)/node_modules/.bin/tsgo"; \
-    export PATH="$(pwd)/node_modules/.bin:${PATH}"; \
-    npm run build; \
-    mkdir -p /tmp/pi-packs; \
-    for pkg in ai agent coding-agent tui; do \
-      npm pack "./packages/$pkg" --pack-destination /tmp/pi-packs; \
-    done; \
-    if [ -d "./packages/client" ]; then \
-      npm pack "./packages/client" --pack-destination /tmp/pi-packs; \
-    fi; \
-    npm install -g /tmp/pi-packs/*.tgz; \
-    rm -rf /tmp/pi-packs; \
-    /home/lpb/.npm-global/bin/pi --version || (echo "FATAL: pi binary not functional" && exit 1); \
-    grep -rq 'Case 4' /home/lpb/.npm-global/lib/node_modules/@earendil-works/ \
-      || (echo "FATAL: Case 4 patch missing from pi-ai" && exit 1); \
-    grep -rq 'qwen-chat-template' /home/lpb/.npm-global/lib/node_modules/@earendil-works/pi-ai/dist/ \
-      || (echo "FATAL: Qwen reasoning_effort patch missing" && exit 1); \
-    grep -rq 'allowScripts' /home/lpb/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/package.json \
-      || (echo "FATAL: pi-coding-agent allowScripts missing (regression in pi fork)" && exit 1); \
-    ls -la /home/lpb/.npm-global/bin/; \
-    rm -rf /opt/pi-src/.git /opt/pi-src/src /opt/pi-src/test /opt/pi-src/tests
+    npm install -g @earendil-works/pi-coding-agent@${PI_VERSION}; \
+    pi --version || (echo "FATAL: pi binary not functional" && exit 1); \
+    [ "$(node -p "require('/home/lpb/.npm-global/lib/node_modules/@earendil-works/pi-coding-agent/package.json').version")" = "${PI_VERSION}" ] \
+      || (echo "FATAL: installed pi version != ${PI_VERSION}" && exit 1); \
+    ls -la /home/lpb/.npm-global/bin/
 
 # ── Switch to non-root user ─────────────────────────────────────────────────
 USER lpb

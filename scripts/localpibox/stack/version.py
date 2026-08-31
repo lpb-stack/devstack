@@ -88,17 +88,21 @@ def _find_version_file() -> Path | None:
 
 # ─── Stack env ─────────────────────────────────────────────────────────────
 
-def get_stack_env(pipeline: str) -> dict[str, str]:
-    """Load the stack env for the given pipeline.
-
-    Returns LPB_PI_REF, LPB_CONFIG_REF, etc.
-    """
-    base_env: dict[str, str] = {}
+def get_stack_env_base() -> dict[str, str]:
+    """Load the base lpb.stack.env only (no pipeline overlay)."""
     for root in _devstack_root_candidates():
         env_file = root / "lpb.stack.env"
         if env_file.is_file():
-            base_env = parse_env_file(env_file)
-            break
+            return parse_env_file(env_file)
+    return {}
+
+
+def get_stack_env(pipeline: str) -> dict[str, str]:
+    """Load the stack env for the given pipeline.
+
+    Returns LPB_PI_VERSION, LPB_CONFIG_REF, etc.
+    """
+    base_env = get_stack_env_base()
 
     # Overlay pipeline-specific env
     for root in _devstack_root_candidates():
