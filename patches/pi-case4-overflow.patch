@@ -1,0 +1,33 @@
+# pi Case 4 recovery patch (de-fork asset)
+#
+# Source: lpb-stack/pi @ pre-defork-0.0.71 (lpb-dev, 6db652ebe)
+# Applies to: upstream earendil-works/pi v0.84.4 (verify: git apply --check patches/pi-case4-overflow.patch)
+# What: adds Case 4 Qwen/llama.cpp reasoning-overflow detection to isContextOverflow().
+#       stopReason=length + non-zero output + input >= 90% of context window => auto-compact-and-retry.
+# Background: upstream issue #4862 (same patch, auto-closed, never merged); PR #7540 (merged, v0.84.3)
+#       covers length stops BELOW the intended cap; Case 4 covers the remaining reached-cap-under-
+#       context-pressure subcase (upstream #6719 closed no-action).
+# Apply inside a pi checkout: git apply patches/pi-case4-overflow.patch
+
+diff --git a/packages/ai/src/utils/overflow.ts b/packages/ai/src/utils/overflow.ts
+index c1e6457ff..c03c1d9fb 100644
+--- a/packages/ai/src/utils/overflow.ts
++++ b/packages/ai/src/utils/overflow.ts
+@@ -159,6 +159,17 @@ export function isContextOverflow(message: AssistantMessage, contextWindow?: num
+ 		}
+ 	}
+ 
++	// Case 4: Qwen/Llama.cpp reasoning overflow "models auto-generate thinking/reasoning
++	// blocks that silently consume the output token budget. This produces stopReason "length"
++	// with non-zero output (all thinking tokens, no text/tool calls) when input is near the
++	// context window.
++	if (contextWindow && message.stopReason === "length" && message.usage.output > 0) {
++		const inputTokens = message.usage.input + message.usage.cacheRead;
++		if (inputTokens >= contextWindow * 0.9) {
++			return true;
++		}
++	}
++
+ 	return false;
+ }
+ 

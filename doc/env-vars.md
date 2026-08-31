@@ -98,7 +98,7 @@ So setting `LPB_EXA_API_KEY` in your project `.env` is sufficient —
 
 | Variable | dev profile | main profile | Meaning |
 |---|---|---|---|
-| `LPB_PI_REF` | `lpb-dev` | `lpb` | Pi fork branch baked into the image |
+| `LPB_PI_VERSION` | `0.84.4` | `0.84.4` | Mainstream pi npm version installed in the image (`@earendil-works/pi-coding-agent`) |
 | `LPB_CONFIG_REF` | `dev` | `main` | Config preset branch baked into the image |
 
 These select **what goes into the image** (build time) and which pipeline

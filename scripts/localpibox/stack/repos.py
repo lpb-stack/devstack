@@ -48,7 +48,10 @@ WORKSPACE_REPOS = [
     ("lemonade-pi-plugin", True,  True,  "lpb-dev", "lpb"),
     ("lpb-memory",        True,  True,  "dev",    "main"),
     ("pi-subagents",      True,  True,  "lpb-dev", "lpb"),
-    ("pi",                False, False, "lpb-dev", "lpb"),
+    # pi is no longer a stack repo (de-forked 2026-08-31 — the lpb-stack/pi
+    # fork is retired; the image installs mainstream pi from the npm
+    # registry at LPB_PI_VERSION). A local workspace/pi clone may remain as
+    # a reference only (retired state: tag pre-defork-0.0.71).
 ]
 
 # The config repo lives in the agent dir (DEFAULT_AGENT_DIR) instead of the

@@ -7,6 +7,7 @@ pi fork branch consistency.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from ..log import Console
@@ -19,7 +20,7 @@ from .repos import (
     WORKSPACE_ROOT,
     _DEVSTACK_ROOT,
 )
-from .version import _find_version_file, expected_branch, expected_pin_version, get_stack_env, get_version
+from .version import _find_version_file, expected_branch, expected_pin_version, get_stack_env, get_stack_env_base, get_version
 from .workspace import (
     _detached_ref,
     _get_pinned_versions,
@@ -41,7 +42,7 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     cons.info("")
     cons.info(f"  Pipeline:  {pipeline}")
     cons.info(f"  VERSION:   {version}")
-    cons.info(f"  LPB_PI_REF:     {stack_env.get('LPB_PI_REF', '?')}")
+    cons.info(f"  LPB_PI_VERSION:   {stack_env.get('LPB_PI_VERSION', '?')}")
     cons.info(f"  LPB_CONFIG_REF: {stack_env.get('LPB_CONFIG_REF', '?')}")
     cons.info("")
 
@@ -161,16 +162,22 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     cons.info("")
     cons.info("  Stack env:")
 
-    pi_ref = stack_env.get("LPB_PI_REF", "")
+    pi_version = stack_env.get("LPB_PI_VERSION", "")
+    base_pi_version = get_stack_env_base().get("LPB_PI_VERSION", "")
     config_ref = stack_env.get("LPB_CONFIG_REF", "")
-    pi_ref_expected = expected_branch("pi", pipeline)
     config_ref_expected = expected_branch("config", pipeline)
 
     check(
-        "LPB_PI_REF correct",
-        pi_ref == pi_ref_expected,
-        f"current={pi_ref}, expected={pi_ref_expected}",
-        f"Edit lpb.stack.{pipeline}.env or lpb.stack.env",
+        "LPB_PI_VERSION is a version",
+        bool(re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", pi_version)),
+        f"current={pi_version!r} (expected X.Y.Z npm version of mainstream pi)",
+        "Edit lpb.stack.env / lpb.stack.<pipeline>.env",
+    )
+    check(
+        "LPB_PI_VERSION matches base lpb.stack.env",
+        bool(pi_version) and pi_version == base_pi_version,
+        f"profile={pi_version!r}, base={base_pi_version!r}",
+        "Bump LPB_PI_VERSION in lpb.stack.env AND the pipeline profile together",
     )
     check(
         "LPB_CONFIG_REF correct",
@@ -216,43 +223,9 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
               f"{settings_path} not found",
               "Clone config repo or create settings.json")
 
-    # ── 7. pi/lpb vs lpb-dev (informational only) ────────────────────
-    cons.info("")
-    cons.info("  Fork branch consistency:")
-
-    pi_path = _resolve_repo_path("pi")
-    if pi_path:
-        lpb_hash_out, _, lpb_code = git(pi_path, "rev-parse", "--verify", "lpb")
-        lpbdev_hash_out, _, lpbdev_code = git(pi_path, "rev-parse", "--verify", "lpb-dev")
-
-        if lpb_code == 0 and lpbdev_code == 0:
-            lpb_hash = lpb_hash_out.strip()
-            lpbdev_hash = lpbdev_hash_out.strip()
-            if lpb_hash == lpbdev_hash:
-                check(
-                    "pi: lpb == lpb-dev",
-                    True,
-                    f"lpb=lpb-dev ({lpb_hash[:8]})",
-                )
-            else:
-                # lpb-dev ahead of lpb is normal during active development
-                # Only warn, don't fail — stable merge to lpb happens when ready
-                ahead_out, _, _ = git(pi_path, "rev-list", "--count", "lpb..lpb-dev")
-                ahead = ahead_out.strip() or "0"
-                cons.info(f"  ℹ️  pi: lpb-dev is {ahead} commit(s) ahead of lpb (normal during dev)")
-                cons.raw(f"     lpb={lpb_hash[:8]}, lpb-dev={lpbdev_hash[:8]}")
-        else:
-            missing = []
-            if lpb_code != 0:
-                missing.append("lpb")
-            if lpbdev_code != 0:
-                missing.append("lpb-dev")
-            check(
-                "pi: lpb & lpb-dev both exist",
-                False,
-                f"missing local branch(es): {', '.join(missing)}",
-                "lpb-devstack workspace sync (creates local tracking branches for both pipelines)",
-            )
+    # ── 7. (pi fork branch consistency removed — de-forked 2026-08-31:
+    #       the lpb-stack/pi fork is retired; mainstream pi installs from
+    #       the npm registry at LPB_PI_VERSION, so fork branch state is moot)
 
     # ── Summary ────────────────────────────────────────────────────────
     cons.info("")

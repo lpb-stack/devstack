@@ -1754,9 +1754,9 @@ def _build_run_env(mount_path: str) -> list[str]:
         f"LPB_DEVCONTAINER_WORKSPACE_DIR={mount_path}",
         f"LPB_CONNECTION_TOKEN={cfg.token}",
         f"CONNECTION_TOKEN={cfg.token}",
-        # NOTE: LPB_PI_REF and LPB_CONFIG_REF are NOT passed as env vars.
-        # The image is built with these baked in (LPB_PI_REF is the version
-        # tag or branch ref). The image IS the configuration reference —
+        # NOTE: LPB_PI_VERSION and LPB_CONFIG_REF are NOT passed as env vars.
+        # The image is built with these baked in (LPB_PI_VERSION is the pinned
+        # npm version of mainstream pi). The image IS the configuration reference —
         # lpb.py just selects which pre-built image to use.
         # Note: LPB_STATE_DIR is NOT passed to the container. It's a launcher-time
         # config (lpb.py reads it to resolve the host mount source). The container
