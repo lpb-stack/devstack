@@ -60,7 +60,7 @@ REPOS: list[tuple[str, Path, str, str, str, bool]] = [
     ("lpb-memory", AGENT_GIT / "lpb-memory", "Pi extension (memory)", "dev", "main", True),
     ("pi-subagents", AGENT_GIT / "pi-subagents", "Pi extension (subagents)", "lpb-dev", "lpb", True),
     ("lemonade-pi-plugin", AGENT_GIT / "lemonade-pi-plugin", "Pi extension (lemonade provider)", "lpb-dev", "lpb", True),
-    ("pi", WORKSPACE_ROOT / "pi", "Pi fork (CI clones to /opt/pi-src)", "lpb-dev", "lpb", True),
+    ("pi", WORKSPACE_ROOT / "pi", "Reference clone of the retired fork (de-forked 2026-08-31 — image installs mainstream pi from npm at `LPB_PI_VERSION`)", "—", "—", False),
 ]
 
 
@@ -139,7 +139,7 @@ def repo_map_md(tag: str | None, now: str) -> str:
         "",
         "All repos live under `github.com/lpb-stack`. devstack is the single "
         "source of the stack version (`VERSION` file) and is never tagged; "
-        "CI tags the other five repos per pipeline. Every **stable** "
+        "CI tags the other four repos per pipeline. Every **stable** "
         f"release has a matching docs version at `{SITE_BASE}/<tag>/` "
         "— use the version switcher in the header (or visit "
         f"[the docs root]({SITE_BASE}/) for the latest).",
