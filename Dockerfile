@@ -121,6 +121,15 @@ RUN --mount=type=cache,target=/home/lpb/.npm \
     npm install -g zod@3 agent-browser exa-mcp-server; \
     chown -R 1000:1000 /home/lpb/.npm-global
 
+# Support scripts (/opt/pi-support/*.ts) import npm globals (zod) that live
+# under the custom prefix above — bare `require` never looks in global npm
+# prefixes, so put the lib dir on Node's resolution path explicitly.
+ENV NODE_PATH=/home/lpb/.npm-global/lib/node_modules
+
+# browser-validate.ts writes its reports here — must exist and be
+# lpb-writable (the script runs as uid 1000 and cannot mkdir at /).
+RUN mkdir -p /browser-states && chown 1000:1000 /browser-states
+
 # ── Pi (mainstream, pinned npm version) ─────────────────────────────────
 # One package pulls in pi-ai/pi-tui/pi-agent-core/pi-client as dependencies.
 # Mainstream pi packages do NOT declare allowScripts (fork-only addition;

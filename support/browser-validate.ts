@@ -20,6 +20,8 @@
 import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { z } from "zod";
 
 // ─── Zod Schema ──────────────────────────────────────────────────────────────
@@ -166,16 +168,72 @@ function buildPrompt(
 
 // ─── Task 2.7: Lemonade API call ────────────────────────────────────────────
 
-const LEMONADE_BASE =
-  process.env.LEMONADE_BASE_URL || "http://127.0.0.1:13305/v1";
-const VISION_MODEL = process.env.VISION_MODEL || "Qwen3.6-35B-A3B-MTP-GGUF";
+/**
+ * Resolve the Lemonade base URL.
+ * Priority (matches the lemonade plugin / start.sh):
+ *   1. ~/.pi/agent/auth.json — persisted, verified source (same candidate
+ *      order as the plugin's readStoredPayload; this is what `lpb-config
+ *      show` prints)
+ *   2. LEMONADE_BASE_URL env — startup default; in non-host-networked
+ *      containers it may still be the 127.0.0.1 baked placeholder
+ *   3. 127.0.0.1 placeholder (in-container / host-networked default)
+ */
+function resolveLemonadeBase(): string {
+  const authPath = join(homedir(), ".pi", "agent", "auth.json");
+  try {
+    const auth = JSON.parse(readFileSync(authPath, "utf-8"));
+    const entry =
+      auth?.lemonade ?? auth?.providers?.lemonade ?? auth?.oauth?.lemonade;
+    // The plugin persists `refresh` as a double-encoded JSON string; accept
+    // a plain object too (defensive against future format changes).
+    let refresh: unknown = entry?.refresh;
+    if (typeof refresh === "string") {
+      try {
+        refresh = JSON.parse(refresh);
+      } catch {
+        refresh = undefined;
+      }
+    }
+    const baseUrl: unknown =
+      (refresh as Record<string, unknown> | undefined)?.baseUrl;
+    if (typeof baseUrl === "string" && baseUrl) {
+      const trimmed = baseUrl.replace(/\/$/, "");
+      return /\/v\d+$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
+    }
+  } catch {
+    // no readable auth.json — fall through to env
+  }
+  return process.env.LEMONADE_BASE_URL || "http://127.0.0.1:13305/v1";
+}
+
+/**
+ * Resolve the vision model.
+ * Priority: VISION_MODEL env → agent's default model (settings.json —
+ * what `lpb-config show` reports) → legacy hardcoded fallback.
+ */
+function resolveVisionModel(): string {
+  if (process.env.VISION_MODEL) return process.env.VISION_MODEL;
+  const settingsPath = join(homedir(), ".pi", "agent", "settings.json");
+  try {
+    const settings = JSON.parse(readFileSync(settingsPath, "utf-8"));
+    if (typeof settings?.defaultModel === "string" && settings.defaultModel) {
+      return settings.defaultModel;
+    }
+  } catch {
+    // no readable settings.json — fall through
+  }
+  return "Qwen3.6-35B-A3B-MTP-GGUF";
+}
+
+const LEMONADE_BASE = resolveLemonadeBase();
+const VISION_MODEL = resolveVisionModel();
 
 async function callVisionModel(
   prompt: string,
   screenshotBase64: string,
   _attempt: number,
 ): Promise<string> {
-  const payload = {
+  const payload: Record<string, unknown> = {
     model: VISION_MODEL,
     messages: [
       {
@@ -192,6 +250,13 @@ async function callVisionModel(
     max_tokens: 2048,
     stream: false,
   };
+  // Qwen models think by default; on a small token budget the reasoning can
+  // eat the whole budget and return empty content (flaky JSON output). This
+  // task is structured extraction, not reasoning — disable thinking via the
+  // vendor wire parameter (the same control the pi plugin sends).
+  if (/qwen/i.test(VISION_MODEL)) {
+    payload.enable_thinking = false;
+  }
 
   const response = await fetch(`${LEMONADE_BASE}/chat/completions`, {
     method: "POST",
@@ -318,10 +383,20 @@ function sleep(ms: number): Promise<void> {
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
   const url = args.find(a => !a.startsWith("--"));
+
+  // Flag values: an absent flag must fall back, not pick up args[0] (the URL)
+  // via the old `args[indexOf(flag) + 1]` pattern (indexOf === -1 → args[0]).
+  const flagValue = (flag: string): string | undefined => {
+    const i = args.indexOf(flag);
+    return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
+  };
+
   const sessionId =
-    args[args.indexOf("--session") + 1] ??
+    flagValue("--session") ??
     `${process.env.PI_WORKTREE_ID ?? "default"}-validate-${randomUUID().slice(0, 8)}`;
-  const maxAttempts = parseInt(args[args.indexOf("--attempts") + 1] ?? "3", 10);
+  const parsedAttempts = parseInt(flagValue("--attempts") ?? "3", 10);
+  const maxAttempts =
+    Number.isFinite(parsedAttempts) && parsedAttempts > 0 ? parsedAttempts : 3;
 
   if (!url) {
     console.error(
@@ -333,7 +408,8 @@ async function main(): Promise<void> {
   console.log(`\n=== Browser Validation ===`);
   console.log(`URL: ${url}`);
   console.log(`Session: ${sessionId}`);
-  console.log(`Max attempts: ${maxAttempts}\n`);
+  console.log(`Max attempts: ${maxAttempts}`);
+  console.log(`Vision: ${VISION_MODEL} @ ${LEMONADE_BASE}\n`);
 
   try {
     // Step 1: Pre-compute structured data
