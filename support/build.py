@@ -38,7 +38,9 @@ REQUIRED_STACK_VARS = [
     "LPB_NODE_VERSION",
     "LPB_VSCODIUM_VERSION",
 ]
-REQUIRED_CONF_VARS = ["LPB_MAX_TOKENS_CONTEXT_RATIO"]
+# No required conf vars (LPB_MAX_TOKENS_CONTEXT_RATIO retired 2026-09-02 —
+# response ceilings are per-model in the lemonade-pi-plugin catalog now).
+REQUIRED_CONF_VARS = []
 ENV_FILES = ["lpb.stack.env", "lpb.conf.env"]
 
 # Mainstream pi repo — used only to resolve the source sha of the pinned
@@ -119,7 +121,6 @@ def build_args(
         "--build-arg", f"CONFIG_REF={env['LPB_CONFIG_REF']}",
         "--build-arg", f"NODE_VERSION={env['LPB_NODE_VERSION']}",
         "--build-arg", f"VSCODIUM_VERSION={env['LPB_VSCODIUM_VERSION']}",
-        "--build-arg", f"LPB_MAX_TOKENS_CONTEXT_RATIO={env['LPB_MAX_TOKENS_CONTEXT_RATIO']}",
         "--build-arg", f"LPB_VERSION={lpb_version}",
         "--build-arg", f"IMAGE_REVISION={git_head_short(root, runner=runner)}",
         "--build-arg", f"IMAGE_BUILT={now.strftime('%Y-%m-%dT%H:%M:%SZ')}",

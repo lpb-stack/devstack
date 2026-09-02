@@ -1763,7 +1763,6 @@ def _build_run_env(mount_path: str) -> list[str]:
         # has no need for it — start.sh uses its own defaults. Passing it here
         # would pollute .devstack-env and break future host runs.
         f"LPB_EXA_API_KEY={os.environ.get('LPB_EXA_API_KEY', os.environ.get('EXA_API_KEY', ''))}",
-        f"LPB_MAX_TOKENS_CONTEXT_RATIO={os.environ.get('LPB_MAX_TOKENS_CONTEXT_RATIO', _conf_cfg.get('LPB_MAX_TOKENS_CONTEXT_RATIO', '0.06'))}",
     ]
     # Lemonade model server — resolved by the unified setup preflight in
     # cmd_run (all modes): interactive wizard before a fresh start, or

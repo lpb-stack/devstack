@@ -120,18 +120,20 @@ network calls. Triggered on login, refresh, and `/lemonade change-ctx`.
 
 ### Configuration
 
-| Constant | Value | Purpose |
+The response ceiling (`max_completion_tokens`) is the **per-model
+`maxTokens` catalog field** in the lemonade-pi-plugin model-params catalog
+(`~/.pi/agent/model-params.json` + the plugin-shipped tier) — an exact token
+value per wire model id, applied at model sync. The former ctx-ratio design
+(`DEFAULT_MAX_TOKENS_CONTEXT_RATIO` 0.125, `QWEN_REASONING_MAX_TOKENS_CONTEXT_RATIO`
+0.06, the 16384 clamp, and the `LPB_MAX_TOKENS_CONTEXT_RATIO` env chain)
+was retired 2026-09-02: the plugin's env read was dead (set by nothing), the
+protective work was done by the clamp anyway, and six explicit numbers are
+more auditable than a formula.
+
+| Model | maxTokens | Why |
 |---|---|---|
-| `DEFAULT_MAX_TOKENS_CONTEXT_RATIO` | `0.125` | Non-reasoning Qwen models |
-| `QWEN_REASONING_MAX_TOKENS_CONTEXT_RATIO` | `0.06` | Reasoning models (thinking headroom) |
-| `QWEN_REASONING_BUDGET_TOKENS` | `0` | Soft-capped thinking (prevents runaway) |
-
-### Why the Ratios Matter
-
-| Model Type | Ratio | 262k Context → maxTokens | Why |
-|---|---|---|---|
-| Reasoning (Qwen MTP) | `0.06` | ~15.7k | Thinking blocks consume 10-20k tokens |
-| Non-reasoning (Qwen) | `0.125` | ~32k | Standard ratio, no thinking overhead |
+| Qwen thinking models (27B/35B) | `16384` | Thinking headroom at the 262k window (old formula + clamp landed here) |
+| Small / non-Qwen models | `4096` | Default response cap (matches the former fallback) |
 
 ---
 
