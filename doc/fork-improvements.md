@@ -142,8 +142,8 @@ The delta is always visible as the diff between upstream and `lpb-dev`.
 
 | Backend | Reasoning Support | Why |
 |---|---|---|
-| **MTP** (`Qwen3.6-35B-A3B-MTP-GGUF`) | ✅ Yes | Uses newer chat template that accepts `developer` role |
-| **FLM** (`qwen3.5-9b-FLM`, `qwen3.6-moe-35b-a3b-FLM`) | ❌ No | Chat template only accepts `system/user/assistant/tool` roles |
+| **MTP** (e.g. `Qwen3.6-35B-A3B-MTP-GGUF`) | ✅ Yes | Uses newer chat template that accepts `developer` role |
+| **FLM** (e.g. `qwen3.5-9b-FLM`) | ❌ No | Chat template only accepts `system/user/assistant/tool` roles |
 
 ---
 

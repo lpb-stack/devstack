@@ -277,7 +277,7 @@ OpenSpec enables spec-driven development for the LocalPibox stack:
 - Audit trail of all changes
 
 This is particularly valuable for:
-- Managing the 6-repo stack (each repo has specs)
+- Managing the 5-repo stack (each repo has specs)
 - Tracking breaking changes across upstream updates
 - Ensuring consistency between fork patches and upstream
 - Documenting rationale for design decisions

@@ -1,5 +1,10 @@
 # Design: Manual Tagging & lpb-config Split
 
+> ⚠️ **Point-in-time design record** (2026-08-25). The design it describes is
+> implemented and current, but the command lists and details below are a
+> snapshot — for the up-to-date references see
+> [lpb-devstack](lpb-devstack.md) and [lpb-config](lpb-config.md).
+
 > **Status:** Implemented and running (since 2026-08-20)
 > **Last verified:** 2026-08-25 — tools deployed, CI active
 

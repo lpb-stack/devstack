@@ -34,8 +34,9 @@ On the **first run** — in every mode (`lpb`, `--shell`, `--ssh`, `--web`) —
 `lpb` checks the model-provider state (stored credentials + a live probe of
 the Lemonade server). If it's missing or broken and you're on a terminal,
 the **setup wizard** runs before the container starts: config repo, server
-URL, API key, default model (from the server's live model list) and
-lpb-memory config — every step validated, with errors shown and re-asked
+URL, API key, default model (from the server's live model list), MCP
+servers, and lpb-memory config — every step validated, with errors shown and
+re-asked
 until they're right. The configuration is written straight into the state
 volume, so it's persisted **before first use**; the launch summary ends with
 a model status line.
@@ -68,7 +69,7 @@ lpb --help       # full usage
 
 | Component | Role |
 |---|---|
-| **Pi** (forked) | Coding agent CLI — local fork with Qwen reasoning + context-overflow patches |
+| **Pi** | Coding agent CLI — mainstream pi from the npm registry (pinned in `lpb.stack.env`); Qwen thinking is handled by the lemonade plugin |
 | **VSCodium** | Web-based editor (`:web` image), connects over the OpenVSCode protocol |
 | **lemonade-pi-plugin** (forked) | Model provider for the local **Lemonade** server — Qwen thinking + vision support |
 | **lpb-memory** | Persistent memory + session search for the agent |
@@ -91,7 +92,7 @@ flowchart LR
 
     subgraph Image["ghcr.io/lpb-stack/devstack<br/>(Ubuntu 26.04 + Node.js 24)"]
         direction TB
-        RT["runtime: Pi (forked, patched) + VSCodium + Chrome"]
+        RT["runtime: Pi (npm) + VSCodium + Chrome"]
         CF["extensions (lemonade, memory, subagents) + config preset"]
     end
 
@@ -194,17 +195,21 @@ flowchart TB
 | `lpb` launcher | `lpb --update` self-update (branch follows the selected tag) |
 | Extensions | Runtime — `pi update --extensions` (unpinned packages) |
 | Config preset | `lpb-config update` (git pull of the config repo) |
-| Pi core + patches | Baked into the image — rebuilt by CI |
+| Pi core | Baked into the image from the npm registry (`LPB_PI_VERSION`) — a new version means a CI rebuild |
 
 ## Forked Repos & Upstream Policy
 
-Fork URLs and branches are tracked in `lpb.stack.env` at the repo root.
-Each fork keeps its LocalPibox work as clean commits on top of upstream
-merges, so the delta vs upstream can always be extracted as one patch.
+Pi itself is no longer a fork: the image installs mainstream pi from the
+npm registry at `LPB_PI_VERSION` (the `lpb-stack/pi` fork is retired — see
+[Fork improvements](doc/fork-improvements.md) for the retirement note).
+
+The remaining fork URLs and branches are tracked in `lpb.stack.env` at the
+repo root. Each fork keeps its LocalPibox work as clean commits on top of
+upstream merges, so the delta vs upstream can always be extracted as one
+patch.
 
 | Repo | Upstream | LocalPibox work | Update policy |
 |---|---|---|---|
-| **pi** | `earendil-works/pi` (v0.84.3) | Qwen `reasoning_effort` + context-overflow patches | rebase onto new upstream releases |
 | **lemonade-pi-plugin** | `lemonade-sdk/lemonade-pi-plugin` (no stable release) | Qwen thinking + vision support | follow upstream `main`, check periodically |
 | **pi-subagents** | `tintinweb/pi-subagents` (v0.16.1) | centralized local-first subagent model registry | follow upstream; merge + repair as needed |
 | **lpb-memory** | *(independent project)* | Pi memory extension (subprocess reviews) | no upstream to track |
@@ -212,8 +217,7 @@ merges, so the delta vs upstream can always be extracted as one patch.
 
 Patches are **candidate upstream contributions** — they go upstream only if
 generally useful and not too opinionated for this stack. See
-[Fork improvements](doc/fork-improvements.md) for the full patch-by-patch
-breakdown.
+[Fork improvements](doc/fork-improvements.md) for what each fork adds.
 
 ### Forking & repointing this stack
 
@@ -234,7 +238,7 @@ GitHub Actions (`.github/workflows/build-and-publish.yml`) runs on:
 Versioning is **manual**: `lpb-devstack bump` commits a new `VERSION`, and CI
 builds + tags only when VERSION changed in the pushed commit. Pipeline jobs:
 **VERSION check** → **test** (always) → **build & publish images** →
-**tag repos** (CI tags the other 5 stack repos on their pipeline branches) →
+**tag repos** (CI tags the other 4 stack repos on their pipeline branches) →
 **docs publish** (main pipeline only — publishes the stable docs version,
 gated on the docs being flagged ready via `lpb-devstack release docs-ready`
 before promotion) → **status**. Devstack itself is tracked by its `VERSION`
@@ -285,8 +289,8 @@ lpb --update      # self-update launcher + pull the latest image for your pipeli
 
 ```
 devstack/
-├── Dockerfile            # image build (pi clone, VSCodium, Chrome)
-├── lpb.stack.env         # fork URLs, image names, container identity
+├── Dockerfile            # image build (pi from npm, VSCodium, Chrome)
+├── lpb.stack.env         # stack identity: config repo, pi version, images, container name
 ├── lpb.conf.env          # runtime defaults (baked into the image)
 ├── .env.example          # template for per-project .env (LPB_ vars)
 ├── scripts/              # CLIs + shared package (single source, baked to
@@ -308,7 +312,7 @@ devstack/
 
 - [Documentation site](https://lpb-stack.github.io/devstack/) — one version
   per stable release (served from the `docs` branch)
-- [lpb-stack/pi](https://github.com/lpb-stack/pi) — Pi monorepo fork
+- [lpb-stack/pi](https://github.com/lpb-stack/pi) — retired pi fork (reference only; last state `pre-defork-0.0.71`)
 - [lpb-stack/config](https://github.com/lpb-stack/config) — agent config preset
 - [lpb-stack/lemonade-pi-plugin](https://github.com/lpb-stack/lemonade-pi-plugin) — Lemonade provider plugin
 - [lpb-stack/pi-subagents](https://github.com/lpb-stack/pi-subagents) — subagent model registry

@@ -22,6 +22,7 @@ boot by `start.sh`.
 ├── skills/
 │   ├── agent-browser-mcp-integration/
 │   ├── browser-validation/
+│   ├── lemonade-model-params/
 │   └── mcp-vision-analysis/
 ├── agents/
 │   ├── vision-analysis.md    → visual analysis subagent
@@ -128,8 +129,8 @@ The `agents/` directory defines **subagent model configurations**. Each
 - The system prompt and tools available
 - How the subagent should behave
 
-For example, `vision-analysis.md` defines a subagent that uses the
-local Qwen3.6 vision model to analyze browser screenshots.
+For example, `vision-analysis.md` defines a subagent that opens a page,
+takes a screenshot, and analyzes the image with the session's vision model.
 
 ## Skills Directory
 
@@ -139,6 +140,7 @@ and the pitfalls. The config repo ships:
 
 - `agent-browser-mcp-integration` — browser automation with agent-browser MCP
 - `browser-validation` — automated browser validation pipeline with JSON reports
+- `lemonade-model-params` — tuning lemonade-served models (wire IDs, per-model params, vendor settings)
 - `mcp-vision-analysis` — visual page analysis with the local vision model
 
 (Workspace-level skills, such as `localpibox-repo-workflow`, live in the

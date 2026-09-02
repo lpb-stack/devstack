@@ -132,7 +132,9 @@ docs sync + review happens at release time via `docs-ready`.
 
 ```bash
 # 0. Flag docs as reviewed for the release (merge dev→docs, build site,
-#    review with `cd ~/.lpb-stack/docs-preview && mike serve`, confirm →
+#    review the local build with
+#    `cd ~/.lpb-stack/docs-preview && python3 -m http.server 8000 -d site` →
+#    http://localhost:8000, confirm →
 #    commits DOCS_READY=<stable-version> on the docs branch + pushes)
 lpb-devstack release docs-ready
 

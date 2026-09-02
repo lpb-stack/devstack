@@ -75,7 +75,8 @@ promoting:
 
 1. `lpb-devstack release docs-ready` — merges `origin/dev` → `docs`, builds
    the site, and (after your local review via
-   `cd ~/.lpb-stack/docs-preview && mike serve`) commits
+   `cd ~/.lpb-stack/docs-preview && python3 -m http.server 8000 -d site` →
+   http://localhost:8000) commits
    `DOCS_READY=<stable-version>` on the `docs` branch and pushes it
 2. `release status` shows the docs verdict: `READY` / `MISSING` /
    `WRONG-VERSION` (flag for another version) / `STALE` (doc content changed
@@ -87,7 +88,7 @@ promoting:
    `https://lpb-stack.github.io/devstack/<version>/`
 
 `promote` does per repo (dev branch → stable branch: `dev` → `main` for
-devstack/config/lpb-memory, `lpb-dev` → `lpb` for pi/pi-subagents/
+devstack/config/lpb-memory, `lpb-dev` → `lpb` for pi-subagents/
 lemonade-pi-plugin):
 - **Fast-forward / clean merge**: resets the local stable branch to
   `origin/<stable>`, merges `origin/<dev>`, pushes
