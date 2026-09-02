@@ -169,8 +169,6 @@ jobs:
           echo "CONFIG_REF=$LPB_CONFIG_REF" >> "$GITHUB_OUTPUT"
           echo "NODE_VERSION=$LPB_NODE_VERSION" >> "$GITHUB_OUTPUT"
           echo "VSCODIUM_VERSION=$LPB_VSCODIUM_VERSION" >> "$GITHUB_OUTPUT"
-          MAX_TOKENS=$(grep -E '^LPB_MAX_TOKENS_CONTEXT_RATIO=' lpb.conf.env | cut -d= -f2- | tr -d '"' 2>/dev/null || true)
-          echo "MAX_TOKENS=${MAX_TOKENS:-0.06}" >> "$GITHUB_OUTPUT"
           sha=$(git ls-remote "https://github.com/earendil-works/pi.git" "refs/tags/v${LPB_PI_VERSION}" | awk '{print $1}')
           echo "sha=${sha:-unknown}" >> "$GITHUB_OUTPUT"
           echo "stack_version=${LPB_VERSION}" >> "$GITHUB_OUTPUT"
@@ -192,7 +190,6 @@ jobs:
             VSCODIUM_VERSION=${{ steps.config.outputs.VSCODIUM_VERSION }}
             PI_HEAD_SHA=${{ steps.config.outputs.sha }}
             LPB_VERSION=${{ steps.config.outputs.LPB_VERSION }}
-            LPB_MAX_TOKENS_CONTEXT_RATIO=${{ steps.config.outputs.MAX_TOKENS }}
           secrets: |
             GIT_AUTH_TOKEN=${{ secrets.LPB_STACK_PAT }}
           no-cache: ${{ github.event.inputs.no_cache == 'true' }}
@@ -250,8 +247,6 @@ jobs:
           # VERSION file is the single source (manual tagging — CI never bumps)
           LPB_VERSION=$(cat VERSION)
           echo "LPB_VERSION=${LPB_VERSION}" >> "$GITHUB_OUTPUT"
-          MAX_TOKENS=$(grep -E '^LPB_MAX_TOKENS_CONTEXT_RATIO=' lpb.conf.env | cut -d= -f2- | tr -d '"' 2>/dev/null || true)
-          echo "MAX_TOKENS=${MAX_TOKENS:-0.06}" >> "$GITHUB_OUTPUT"
           sha=$(git ls-remote "https://github.com/earendil-works/pi.git" "refs/tags/v${LPB_PI_VERSION}" | awk '{print $1}')
           echo "sha=${sha:-unknown}" >> "$GITHUB_OUTPUT"
           echo "stack_version=${LPB_VERSION}" >> "$GITHUB_OUTPUT"
@@ -273,7 +268,6 @@ jobs:
             VSCODIUM_VERSION=${{ steps.config.outputs.VSCODIUM_VERSION }}
             PI_HEAD_SHA=${{ steps.config.outputs.sha }}
             LPB_VERSION=${{ steps.config.outputs.LPB_VERSION }}
-            LPB_MAX_TOKENS_CONTEXT_RATIO=${{ steps.config.outputs.MAX_TOKENS }}
           secrets: |
             GIT_AUTH_TOKEN=${{ secrets.LPB_STACK_PAT }}
           no-cache: ${{ github.event.inputs.no_cache == 'true' }}

@@ -33,7 +33,7 @@ VERSION or cross-repo state.
 ```
 Single source: devstack/VERSION
 Developer: lpb-devstack bump → commit → push (the release trigger)
-CI: VERSION changed in pushed commit → tests → build + publish → tag 5 repos
+CI: VERSION changed in pushed commit → tests → build + publish → tag 4 repos
 ```
 
 - **devstack/VERSION** — the only VERSION file in the stack (e.g. `0.0.N-lpb-dev`)
@@ -136,7 +136,7 @@ docs sync + review happens at release time via `docs-ready`.
 #    commits DOCS_READY=<stable-version> on the docs branch + pushes)
 lpb-devstack release docs-ready
 
-# 1. Readiness check (all 6 repos + docs verdict, non-destructive, fetches first)
+# 1. Readiness check (all 5 repos + docs verdict, non-destructive, fetches first)
 lpb-devstack release status
 
 # 2. Inspect the exact plan without changing anything
@@ -163,7 +163,7 @@ What promote does per repo:
 After promote, CI (main pipeline) finishes the release — the VERSION change
 on `main` is the trigger:
 1. Builds `:{v}-cli/web`, `:main-cli/web`, `:latest-cli/web`, `:{sha}-cli/web`
-2. Tags the 5 repos on their stable branches (`lpb`/`main`)
+2. Tags the 4 repos on their stable branches (`lpb`/`main`)
 
 Then align the runtime to the stable pipeline:
 ```bash
@@ -189,7 +189,7 @@ Docs readiness verdicts (`release status`, checked by `promote`):
 ```bash
 # Work happens on dev as usual — CI runs tests on every push (no build).
 # When ready to ship: first push/commit any pending work in the other
-# 5 repos — bump refuses (dev release gate) until they're all on their
+# 4 repos — bump refuses (dev release gate) until they're all on their
 # dev branch, pushed, and committed.
 lpb-devstack bump                # current VERSION patch+1 (+ commit)
 git push origin dev              # CI sees VERSION change → build + tag
@@ -243,8 +243,7 @@ lpb-devstack --tag main validate
 ```
 
 Both tools are thin CLIs over the shared `scripts/localpibox/stack/` library
-(`gitutil` / `repos` / `version` / `workspace` / `validate` / `release`;
-`localpibox._stack_lib` remains a compat shim).
+(`gitutil` / `repos` / `version` / `workspace` / `validate` / `release`).
 
 ## Settings.json Lifecycle
 
@@ -313,7 +312,7 @@ Jobs:
    - manual with `publish_latest`: `:latest-cli/web`
    - cron: `:weekly-cli/web`
 4. **tag-repos** — after successful builds, only if VERSION changed: tags
-   the 5 repos on the pipeline's branches (dev: `lpb-dev`/`dev`, main:
+   the 4 repos on the pipeline's branches (dev: `lpb-dev`/`dev`, main:
    `lpb`/`main`) using `LPB_STACK_PAT`. Retries transient 5xx with backoff
    and **fails the run if any repo's tag fails** (a partially-tagged stack
    is a release bug — re-running the job is idempotent, 422 = already
@@ -341,9 +340,9 @@ is tag `pre-defork-0.0.71` in `lpb-stack/pi`).
 - `scripts/lpb` (wrapper) → `scripts/lpb.py` (engine, stdlib-only)
 - Shared helpers: `scripts/localpibox/` Python package
   (env/log/run/cli + `stack/` for stack operations)
-- `support/lpb-config` + `support/lpb-devstack` (thin CLIs over
-  `localpibox.stack`; symlinks in `scripts/`, installed to
-  `/opt/pi-support/` in the image, to `~/.local/bin` on the host)
+- `scripts/lpb-config` + `scripts/lpb-devstack` (thin CLIs over
+  `localpibox.stack`; installed to `/opt/pi-support/` in the image,
+  to `~/.local/bin` on the host)
 - `support/build.py` — local image builder (`build.py [cli|web] [--push]`);
   CI does the same inline, this is for local/fork builds
 - Installed via `scripts/install.sh` (fetches from the `main` branch —

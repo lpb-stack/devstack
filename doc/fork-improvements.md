@@ -1,91 +1,50 @@
 # LocalPibox Fork Improvements
 
-> Last updated: 2026-08-26
-> Status: Qwen3.6 reasoning + vision fully operational
+> Last updated: 2026-09-03
+> Status: de-forked (2026-08-31) — mainstream pi from npm; Qwen thinking via
+> lemonade-pi-plugin with per-model `maxTokens` ceilings
 
 ---
 
 ## Repository Map
 
-This stack uses 6 repositories under `github.com/lpb-stack`. The two forked
-repos and their upstream origins:
+This stack uses 5 repositories under `github.com/lpb-stack`. Two are forks
+of upstream repos; pi itself is no longer a stack repo (de-forked
+2026-08-31, see the retired-fork note below):
 
 | Repo | Type | Upstream | Purpose |
 |---|---|---|---|
-| **`lpb-stack/pi`** | Fork | `earendil-works/pi` | Pi monorepo — Qwen reasoning + overflow detection |
-| **`lpb-stack/lemonade-pi-plugin`** | Fork | `lemonade-sdk/lemonade-pi-plugin` | Lemonade provider — Qwen model detection, vision |
+| **`lpb-stack/lemonade-pi-plugin`** | Fork | `lemonade-sdk/lemonade-pi-plugin` | Lemonade provider — Qwen thinking protocol, vision, model catalog |
 | **`lpb-stack/pi-subagents`** | Fork | `tintinweb/pi-subagents` | Subagent model registry (local-first) |
 | **`lpb-stack/config`** | Original | — | User settings, skills, agents |
 | **`lpb-stack/devstack`** | Original | — | Docker dev environment + lpb launcher |
 | **`lpb-stack/lpb-memory`** | Original | — | Persistent memory extension |
 
-## The Pi Fork (`lpb-stack/pi`)
+Pi (the coding agent itself) is installed from the npm registry at
+`LPB_PI_VERSION` (`@earendil-works/pi-coding-agent`) — no repo, no fork.
 
-### Upstream Baseline
+## The Pi Fork (`lpb-stack/pi`) — retired 2026-08-31
 
-**Based on:** `earendil-works/pi` v0.84.3 (merged into `lpb-dev` branch)
+The `lpb-stack/pi` fork (based on `earendil-works/pi`, last state: tag
+`pre-defork-0.0.71`) is **retired**. It was based on v0.84.3 with 8 lbp
+commits adding Qwen/Lemonade support: the `reasoning_effort` →
+`chat_template_kwargs` mapping, a `reasoning_budget_tokens` soft cap, Case 4
+reasoning overflow detection, `allowScripts` declarations for native addons,
+and fork versioning. Upstream pi has since picked up `reasoning_effort`
+natively, which made the fork unnecessary.
 
-The original upstream repo is a **TypeScript monorepo** with 11 packages:
-
-| Package | Description |
+| Fork change | Where it lives now |
 |---|---|
-| `@earendil-works/pi-ai` | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| `@earendil-works/pi-agent-core` | Agent runtime with tool calling and state management |
-| `@earendil-works/pi-coding-agent` | Interactive coding agent CLI |
-| `@earendil-works/pi-tui` | Terminal UI library with differential rendering |
-| `@earendil-works/pi-client` | Client library |
-| `@earendil-works/pi-protocol` | Protocol definitions |
-| `@earendil-works/pi-server` | Server component |
-| `@earendil-works/pi-session-backends` | Session storage backends |
-| `@earendil-works/pi-telemetry` | Vendor-neutral telemetry contracts |
-| `@earendil-works/pi-evals` | Evaluation harness |
+| `reasoning_effort` support for Qwen | Mainstream pi ≥0.84.4 sends it natively; the plugin handles the `enable_thinking` protocol |
+| `reasoning_budget_tokens` soft cap | Replaced by per-model `maxTokens` ceilings in the plugin's model-params catalog |
+| Case 4 overflow detection | Replaced by raised `reserveTokens` (early compaction) + per-model ceilings |
+| `allowScripts` for native addons | Re-implemented by devstack: `npm config set allow-scripts …` (start.sh) + `.npmrc` (Dockerfile) |
+| `LOCALPIB_VERSION` env read | Replaced by the `LPB_VERSION` banner baked by the Dockerfile |
+| Last patch (Case 4 overflow) | Kept as `patches/pi-case4-overflow.patch` for reference |
 
-For chat/workflows, see the companion project: [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
-
-### Fork Patches (original set, introduced on v0.84.1/v0.84.2)
-
-The fork adds **6 lbp-specific commits** on top of the upstream merge:
-
-| Commit | What changed | Purpose |
-|---|---|---|
-| `53c1dc2` | **Critical**: Qwen/Lemonade-compatible patches on v0.84.1 | See details below |
-| `3340960` | `docs(lbp)`: document what v0.84.1 provides vs lbp additions | Docs |
-| `2a3e9bc` | `feat(coding-agent)`: declare `allowScripts` for native addons | Allow native addons |
-| `346947d` | `hooks`: sync to latest (validation-only, skip when not in devstack) | Hook management |
-| `8449290` | `chore`: install husky pre-commit hook, remove stale githooks wrapper | Dev tooling |
-| `3fc4978` | `Merge tag 'v0.84.2' into lbp-dev` | Upstream merge |
-
-Since the v0.84.3 merge (`13c6d72`): **2 additional commits** —
-`3c307d0` (fix: cloudflare gateway type, include workers) and
-`6db652e` (style: numeric literal normalization in overflow.ts, biome).
-
-The **critical commit** (`53c1dc2`) adds these surgical changes:
-
-| File | Change | Purpose |
-|---|---|---|
-| `packages/ai/src/api/openai-completions.ts` | Maps `reasoning_effort` to `chat_template_kwargs` | Sends `reasoning_effort: "high"\|"medium"\|"low"` to Qwen models |
-| `packages/ai/src/api/openai-completions.ts` | Adds `reasoning_budget_tokens` param | Sends soft-cap (0) to prevent runaway thinking blocks |
-| `packages/ai/src/types.ts` | Adds `reasoningBudgetTokens` compat field | New compat flag for Qwen reasoning budget |
-| `packages/ai/src/utils/overflow.ts` | Adds **Case 4** reasoning overflow detection | Detects when thinking blocks consume output token budget |
-| `packages/coding-agent/src/config.ts` | Adds `LOCALPIB_VERSION` env | Reads `LPB_VERSION` for fork identification |
-| `VERSION` | New file: `0.0.1-lbp` | Fork version marker |
-| `package.json` | Version → `0.0.1-lbp` | Fork version |
-
-### Branch Strategy
-
-| Branch | Source | Content |
-|---|---|---|
-| `lpb-dev` (default) | Upstream + patches | Active development, contains lbp patches |
-| `lpb` (stable) | Derived from `lpb-dev` | Stable branch, receives clean merges |
-
-To update:
-```bash
-git fetch https://github.com/earendil-works/pi.git
-git checkout lbp-dev
-git rebase <upstream-tag>    # e.g. v0.84.2
-# apply lbp patches
-git push --force-with-lease origin lbp-dev
-```
+Re-introducing a forked pi is only needed for changes upstream hasn't
+picked up — see `doc/forking.md` for the procedure. A local `workspace/pi`
+reference clone may remain at the retired tag.
 
 ---
 
@@ -101,7 +60,7 @@ to support Qwen reasoning models on the Lemonade local provider.
 | **Qwen detection** | `isQwenReasoningModel()` — detects Qwen3.x, QwQ, Qwen2.5-thinking via regex |
 | **MTP detection** | `isMtpModel()` — detects Multi-Token Prediction models |
 | **FLM detection** | `flmTemplateRejectsDeveloperRole()` — disables reasoning for FLM backends |
-| **Dynamic maxTokens** | Reasoning: `0.06 × contextWindow`. Non-reasoning: `0.125` — prevents context overflow |
+| **Dynamic maxTokens** | Per-model `maxTokens` in the model-params catalog — prevents context overflow (see Configuration below) |
 | **Thinking protocol** | Adds `enable_thinking`, `reasoning_budget_tokens`, `thinkingFormat: "qwen-chat-template"` |
 | **Heuristic detection** | `isReasoningByHeuristic()` — catches models without `recipe` field |
 
@@ -190,16 +149,20 @@ The delta is always visible as the diff between upstream and `lpb-dev`.
 
 ## Known Issues & Mitigations
 
-### Qwen3 Thinking Overflow (2026-08-02)
+### Qwen Thinking Overflow (2026-08-02)
 
-Qwen3.6 with thinking enabled throws "context size exceeded" when
-`prompt + max_tokens` exceeds the 262k window.
+Qwen with thinking enabled throws "context size exceeded" when
+`prompt + max_tokens` exceeds the window.
 
-**Mitigations:**
-- `maxTokens` reduced to ~15k (`ratio 0.06`) — leaves room for 10-20k thinking blocks
-- `reserveTokens` doubled to 32k — compaction fires at ~88% (230k) instead of ~94% (246k)
+**Mitigations (current):**
+- Per-model `maxTokens` ceilings in the lemonade-pi-plugin model-params
+  catalog (16384 for Qwen thinking models — exact values, no formula)
+- `reserveTokens` raised — compaction fires before the window overflows
 - Thinking disabled during compaction — prevents meta-thinking waste
-- `LPB_MAX_TOKENS_CONTEXT_RATIO=0.06` set in `start.sh` and `.env.example`
+
+The original ratio-based mitigation (`LPB_MAX_TOKENS_CONTEXT_RATIO=0.06`
+in `start.sh` / `.env.example`) was retired 2026-09-02 — see Configuration
+above.
 
 ### agent-browser-chat
 
@@ -215,8 +178,7 @@ per-call. Cannot point at local Lemonade server. Not usable with this stack.
 | Variable | Value | Purpose |
 |---|---|---|
 | `LEMONADE_BASE_URL` | `http://127.0.0.1:13305/v1` | Model API endpoint |
-| `VISION_MODEL` | `Qwen3.6-35B-A3B-MTP-GGUF` | Vision model ID |
-| `LPB_MAX_TOKENS_CONTEXT_RATIO` | `0.06` | Max tokens ratio for Qwen reasoning |
+| `VISION_MODEL` | *(configured)* | Vision model ID — see `lpb-config show` |
 | `AGENT_BROWSER_MAX_OUTPUT` | `4000` | Max chars for snapshot output |
 
 ### Admin Commands

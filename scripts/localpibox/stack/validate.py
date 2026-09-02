@@ -1,8 +1,7 @@
 """Full-stack validation: check every alignment dimension against a pipeline.
 
 Covers: VERSION file, config repo branch, workspace repo branches/symlinks,
-extension alignment, stack env refs, settings.json pins, and (informational)
-pi fork branch consistency.
+extension alignment, stack env refs, and settings.json pins.
 """
 
 from __future__ import annotations

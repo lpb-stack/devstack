@@ -42,7 +42,6 @@ If a value from `.env` doesn't seem to apply, check shell env first:
 | `LPB_EDITOR_HOST` | `0.0.0.0` | Editor listen host (`127.0.0.1` for local-only) |
 | `LPB_CONNECTION_TOKEN` | *(random per start)* | OpenVSCode token — set for a stable token |
 | `LPB_LEMONADE_BASE_URL` | `http://127.0.0.1:13305/v1` | Local model server endpoint |
-| `LPB_MAX_TOKENS_CONTEXT_RATIO` | `0.06` | max_tokens as fraction of context window (Qwen thinking headroom) |
 | `LPB_AGENT_BROWSER_SESSION` | `$PI_WORKTREE_ID` | Browser session isolation id |
 | `LPB_AGENT_BROWSER_MAX_OUTPUT` | `4000` | Max chars for browser snapshot output |
 | `LPB_AGENT_BROWSER_ARGS` | `--no-sandbox,…` | Chrome launch args |
@@ -80,7 +79,6 @@ priority: shell env > `LPB_` > container-safe fallback):
 | `LPB_LEMONADE_BASE_URL` | `LEMONADE_BASE_URL` | Lemonade provider + setup wizard |
 | `LPB_LEMONADE_API_KEY` | `LEMONADE_API_KEY` | Lemonade provider + setup wizard |
 | `LPB_OPENROUTER_BASE_URL` | `OPENROUTER_BASE_URL` | Optional overflow provider |
-| `LPB_MAX_TOKENS_CONTEXT_RATIO` | `MAX_TOKENS_CONTEXT_RATIO` | lemonade-pi-plugin (max_tokens ratio) |
 | `LPB_CONNECTION_TOKEN` | `CONNECTION_TOKEN` | OpenVSCode |
 | `LPB_EDITOR_HOST` | `HOST` | OpenVSCode |
 | `LPB_ED_PORT` | `ED_PORT` | OpenVSCode |
@@ -115,7 +113,6 @@ These select **what goes into the image** (build time) and which pipeline
 | `LPB_AGENT_GIT` | Extension clones dir (default `$AGENT_DIR/git/github.com/lpb-stack`) |
 | `LEMONADE_BASE_URL` | Model API endpoint (`http://127.0.0.1:13305/v1`) |
 | `LEMONADE_API_KEY` | Lemonade server API key (bridged from `LPB_LEMONADE_API_KEY`) |
-| `MAX_TOKENS_CONTEXT_RATIO` | max_tokens ratio for the lemonade provider (bridged) |
 | `AGENT_BROWSER_SESSION` | Browser session isolation id |
 | `AGENT_BROWSER_MAX_OUTPUT` | Max chars for snapshot output |
 

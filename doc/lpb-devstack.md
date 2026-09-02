@@ -34,7 +34,7 @@ commit** — the bump commit is the release trigger.
 
 | Command | Description |
 |---|---|
-| `lpb-devstack tag-repos` | Tag the 5 stack repos (excl. devstack) at the committed VERSION |
+| `lpb-devstack tag-repos` | Tag the 4 stack repos (excl. devstack) at the committed VERSION |
 | `lpb-devstack tag-repos --branch dev` | Tag on dev branches (`lpb-dev`/`dev`) |
 | `lpb-devstack tag-repos --branch main` | Tag on stable branches (`lpb`/`main`) |
 | `lpb-devstack tag-repos --version V` | Explicit version (default: devstack VERSION file) |
@@ -64,7 +64,7 @@ partially-tagged stack is a release bug.
 
 | Command | Description |
 |---|---|
-| `lpb-devstack release status` | Pre-flight check: all 6 repos + docs flag, non-destructive |
+| `lpb-devstack release status` | Pre-flight check: all 5 repos + docs flag, non-destructive |
 | `lpb-devstack release docs-ready [--yes]` | Flag the docs branch as reviewed for the next stable release |
 | `lpb-devstack release promote --dry-run` | Inspect plan without making changes |
 | `lpb-devstack release promote` | Promote dev → main (interactive confirmation, blocked until docs are ready) |
@@ -134,7 +134,7 @@ lpb-devstack release docs-ready                # merge dev→docs, review site, 
 lpb-devstack release status                    # readiness check (repos + docs)
 lpb-devstack release promote --dry-run         # inspect plan
 lpb-devstack release promote                   # dev → stable + push (blocked until docs ready)
-lpb-devstack tag-repos --branch main           # tag the 5 repos on stable branches
+lpb-devstack tag-repos --branch main           # tag the 4 repos on stable branches
 lpb-config --tag main sync-pins   # pins → stable tag
 pi update --extensions
 # CI (main pipeline) then builds images, tags repos, and publishes the
