@@ -145,6 +145,7 @@ BARE_NAMES=(
     AGENT_BROWSER_CONFIRM_ACTIONS
     AGENT_BROWSER_IDLE_TIMEOUT_MS
     AGENT_BROWSER_SESSION
+    AGENT_BROWSER_ALLOWED_DOMAINS
 )
 # Container-safe fallbacks per bare name (absent = pure LPB_→bare promotion).
 declare -A BARE_FALLBACKS=(
