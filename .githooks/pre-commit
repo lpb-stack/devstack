@@ -13,6 +13,19 @@
 #   SKIP_TESTS=1 git commit ...   — skip unit tests (~4s)
 #   git commit --no-verify ...    — skip everything
 
+# Devstack's own tree: tracked changes must be STAGED — unstaged edits
+# would silently be missing from the commit being made right now.
+# (Untracked files are fine: new work-in-progress.)
+echo "=== devstack staged ==="
+unstaged=$(git diff --name-only)
+if [ -n "$unstaged" ]; then
+    echo "❌ Unstaged changes in devstack (NOT included in this commit):"
+    echo "$unstaged" | sed 's/^/   /'
+    echo "   git add the files above (or commit them separately), or --no-verify"
+    exit 1
+fi
+echo ""
+
 echo "=== lpb-devstack validate (workspace copy) ==="
 if ! python3 scripts/lpb-devstack validate; then
     echo ""

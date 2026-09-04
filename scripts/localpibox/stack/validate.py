@@ -2,7 +2,8 @@
 
 Covers: VERSION file, config repo branch, workspace repo branches/symlinks,
 pipeline consistency (no mixed dev/main state), extension alignment,
-stack env refs, and settings.json pins.
+worktree state (config clean, extension-repo WIP report), stack env refs,
+and settings.json pins.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from .repos import (
 from .version import _find_version_file, expected_branch, expected_pin_version, get_stack_env, get_stack_env_base, get_version
 from .workspace import (
     _detached_ref,
+    _dirty_files,
     _get_pinned_versions,
     _read_settings,
     _repo_branch,
@@ -145,6 +147,44 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
         ", ".join(f"{n}={b}" for n, b, _ in branch_map) or "no repos found",
         f"lpb-devstack --tag {pipeline} workspace sync",
     )
+
+    # ── 3b. Worktree state — leftover uncommitted changes ─────────────
+    cons.info("")
+    cons.info("  Worktree state:")
+
+    # config repo: everything runtime is gitignored there, so a dirty
+    # worktree means uncommitted template/skill/doc content — always an
+    # anomaly, and a hard check.
+    if (config_path / ".git").exists():
+        cfg_dirty = _dirty_files(config_path)
+        check(
+            "  config worktree clean",
+            not cfg_dirty,
+            "uncommitted changes:" if cfg_dirty else "clean",
+            "git -C ~/.pi/agent status — commit or discard first",
+        )
+        if cfg_dirty:
+            for line in cfg_dirty[:5]:
+                cons.warn(f"     {line.strip()}")
+
+    # Extension code repos: uncommitted WIP is normal during dev — report
+    # it (it previously sat invisible until a sync skipped the repo), but
+    # don't block on it. devstack's own tree is judged by the pre-commit
+    # hook (unstaged check), not here.
+    dirty_ext: list[str] = []
+    for name, is_sym, is_ext, dev_branch, main_branch in WORKSPACE_REPOS:
+        if name == "devstack":
+            continue
+        path = _resolve_repo_path(name)
+        if path is None:
+            continue
+        files = _dirty_files(path)
+        if files:
+            dirty_ext.append(f"{name} ({len(files)} file(s))")
+    if dirty_ext:
+        cons.warn(f"  WIP in extension repos (not blocking): {', '.join(dirty_ext)}")
+    else:
+        cons.info("  extension repos: no uncommitted changes")
 
     # ── 4. Extension repos match workspace ─────────────────────────────
     cons.info("")

@@ -277,12 +277,15 @@ Same pattern — template in config repo, user config on host volume:
 ## Hooks (devstack only, `core.hooksPath=.githooks`)
 
 **pre-commit** — validates BEFORE commit (exit non-zero aborts):
-1. `python3 scripts/lpb-devstack validate` — the full stack alignment
+1. devstack's tracked changes are fully staged (unstaged edits would
+   silently miss the commit)
+2. `python3 scripts/lpb-devstack validate` — the full stack alignment
    check (VERSION, `LPB_PI_VERSION`, extension pins, branch alignment,
-   pipeline consistency). Runs the WORKSPACE copy on purpose: the PATH
-   `lpb-devstack` is the image-baked one and stays stale until the next
-   rebuild, so the hook always validates with the current logic.
-2. `scripts/test_lpb.py` passes (skip with `SKIP_TESTS=1`)
+   pipeline consistency, config worktree clean + extension-repo WIP
+   report). Runs the WORKSPACE copy on purpose: the PATH `lpb-devstack`
+   is the image-baked one and stays stale until the next rebuild, so the
+   hook always validates with the current logic.
+3. `scripts/test_lpb.py` passes (skip with `SKIP_TESTS=1`)
 
 The full test suite in pre-commit is intentional — it guards against
 low-quality changes reaching the repo. `lpb-devstack validate-hooks` runs
