@@ -1,7 +1,8 @@
 """Full-stack validation: check every alignment dimension against a pipeline.
 
 Covers: VERSION file, config repo branch, workspace repo branches/symlinks,
-extension alignment, stack env refs, and settings.json pins.
+pipeline consistency (no mixed dev/main state), extension alignment,
+stack env refs, and settings.json pins.
 """
 
 from __future__ import annotations
@@ -88,10 +89,14 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
               "no VERSION file found", "Ensure devstack/VERSION exists")
 
     # ── 2. Config repo ─────────────────────────────────────────────────
+    # branch_map collects (name, actual_branch, expected_branch) for the
+    # at-a-glance pipeline-consistency check at the end of section 3.
+    branch_map: list[tuple[str, str, str]] = []
     config_path = Path(DEFAULT_AGENT_DIR)
     if (config_path / ".git").exists():
         config_branch = _repo_branch(config_path)
         config_expected = expected_branch("config", pipeline)
+        branch_map.append(("config", config_branch, config_expected))
         check(
             "Config repo on correct branch",
             config_branch == config_expected,
@@ -119,16 +124,27 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
         branch = _repo_branch(path)
         head = _repo_head(path)
         details = f"branch={branch} ({head})"
+        branch_map.append((name, branch, expected))
 
         if is_sym:
             ws_path = WORKSPACE_ROOT / name
             symlink_ok = ws_path.is_symlink()
             check(f"  {name} symlink", symlink_ok,
                   f"{ws_path} → {ws_path.resolve() if symlink_ok else 'broken'}")
-            details = "symlink ✅" if symlink_ok else "symlink ❌"
 
         check(f"  {name} branch", branch == expected, details,
               f"cd {path} && git checkout {expected}")
+
+    # At-a-glance consistency: every repo must sit on its branch for this
+    # pipeline — a partial sync leaves a mixed dev/main state, and that
+    # shows up here in one line instead of scattered per-repo failures.
+    bad = [(n, b) for n, b, e in branch_map if b != e]
+    check(
+        "Pipeline consistency (no mixed state)",
+        not bad,
+        ", ".join(f"{n}={b}" for n, b, _ in branch_map) or "no repos found",
+        f"lpb-devstack --tag {pipeline} workspace sync",
+    )
 
     # ── 4. Extension repos match workspace ─────────────────────────────
     cons.info("")

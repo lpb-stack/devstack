@@ -152,6 +152,6 @@ lpb-devstack bump --push
 lpb-devstack workspace status
 lpb-devstack validate
 
-# Full pre-commit gate (VERSION format, pins, cleanliness, tests)
+# Full pre-commit gate (stack validation via workspace validate + test suite)
 lpb-devstack validate-hooks
 ```
