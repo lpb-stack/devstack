@@ -22,6 +22,7 @@ from .repos import (
     _DEVSTACK_ROOT,
 )
 from .version import _find_version_file, expected_branch, expected_pin_version, get_stack_env, get_stack_env_base, get_version
+from .serverhealth import run_server_checks
 from .workspace import (
     _detached_ref,
     _dirty_files,
@@ -281,6 +282,37 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     # ── 7. (pi fork branch consistency removed — de-forked 2026-08-31:
     #       the lpb-stack/pi fork is retired; mainstream pi installs from
     #       the npm registry at LPB_PI_VERSION, so fork branch state is moot)
+
+    # ── 7. Lemonade server health (external host — live probes) ───────
+    # The server is user-managed outside this stack; after an upgrade its
+    # startup flags can silently regress. Probe what HTTP exposes.
+    cons.info("")
+    cons.info("  Lemonade server:")
+
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        auth = _json.loads((_Path.home() / ".pi" / "agent" / "auth.json").read_text())
+        entry = (auth.get("lemonade") or (auth.get("providers") or {}).get("lemonade")
+                 or (auth.get("oauth") or {}).get("lemonade") or {})
+        creds = _json.loads(entry.get("refresh") or "{}")
+        base = (creds.get("baseUrl") or "").strip().rstrip("/")
+        skey = creds.get("apiKey") or entry.get("access") or ""
+        if base.startswith(("http://", "https://")) and skey:
+            # probe with the configured session model when resolvable
+            probe_model = None
+            try:
+                dm = (_read_settings(config_path) or {}).get("defaultModel")
+                if isinstance(dm, str) and dm:
+                    probe_model = dm.split("/")[-1]
+            except Exception:
+                probe_model = None
+            for chk in run_server_checks(base, skey, probe_model):
+                check(chk["label"], chk["ok"], chk["detail"], chk["fix"])
+        else:
+            cons.warn("  ⚠ Lemonade server not configured (auth.json) — skipping live probes")
+    except Exception as e:
+        cons.warn(f"  ⚠ Lemonade server probe skipped: {e}")
 
     # ── Summary ────────────────────────────────────────────────────────
     cons.info("")
