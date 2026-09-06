@@ -285,7 +285,7 @@ PROMPTS = {
     ("math_balls_boxes", "hard",
      "In how many ways can 3 indistinguishable balls be placed into 4 distinguishable boxes?"),
     ("math_coin_prob", "hard",
-     "A fair coin is flipped 5 times. What is the probability of getting exactly 3 heads? Express your answer as a fraction in lowest terms."),
+     "A fair coin is flipped 5 times. What is the probability of getting exactly 3 heads? Give the numerator and denominator of that fraction, separated by a slash, with no spaces (for example: 1/2)."),
     ("math_log_eq", "hard",
      "Solve for x: log base 2 of x plus log base 2 of (x minus 2) equals 4. Give the exact value of x."),
     ("math_sequence", "hard",
@@ -298,7 +298,7 @@ PROMPTS = {
 # and MATH (hendrycks/math) style problems, adapted for single-shot scoring.
 ANSWER_KEYWORDS = {
     "gsm_clips":        ["72"],
-    "gsm_babysit":      ["10", "$10"],
+    "gsm_babysit":      ["earned $10", "earn $10", "= $10", "**$10**", "$10."],  # bare "10" too ambiguous ("105")
     "gsm_letter":       ["624"],
     "gsm_wallet":       ["5", "$5"],
     "gsm_book":         ["42"],
@@ -306,8 +306,9 @@ ANSWER_KEYWORDS = {
     "math_heads_legs":  ["10"],
     "math_div_or":      ["220"],
     "math_balls_boxes": ["20"],
-    "math_coin_prob":   ["5/16"],
-    "math_log_eq":      ["\u221a17", "sqrt(17)"],
+    "math_coin_prob":   ["5/16", "5 / 16"],
+    "math_log_eq":      ["+ \u221a17", "+\u221a17", "- \u221a17", "-\u221a17",
+                         "sqrt(17)", "\u221a 17"],
     "math_sequence":    ["33"],
 }
 
@@ -324,7 +325,12 @@ def score_answer(prompt_key: str, result: dict) -> dict:
     if not result["success"]:
         return scoring
 
-    c = (result.get("answer", "") or "") + "\n" + (result.get("reasoning_content", "") or "")
+    ans_full = result.get("answer")
+    if not isinstance(ans_full, str):
+        # re-scoring from stored records: answer_text holds the (possibly
+        # tail-truncated) answer — use it instead of an empty string
+        ans_full = result.get("answer_text", "") or ""
+    c = ans_full + "\n" + (result.get("reasoning_content", "") or "")
     rc = result.get("reasoning_content", "") or ""
 
     scoring["valid_response"] = len(c.strip()) > 10
@@ -341,10 +347,14 @@ def score_answer(prompt_key: str, result: dict) -> dict:
         def kw_hit(kw: str) -> bool:
             k = kw.lower()
             for m in re.finditer(re.escape(k), content_lower):
-                before = content_lower[m.start() - 1] if m.start() > 0 else ""
-                after = content_lower[m.end()] if m.end() < len(content_lower) else ""
-                if before.isdigit() or after.isdigit():
-                    continue
+                # digit-boundary guard only applies to purely-numeric keywords:
+                # reject "10" inside "100", but let "1+√17" match (the leading
+                # 1 is part of the expression, not a false-positive boundary)
+                if k.isdigit():
+                    before = content_lower[m.start() - 1] if m.start() > 0 else ""
+                    after = content_lower[m.end()] if m.end() < len(content_lower) else ""
+                    if before.isdigit() or after.isdigit():
+                        continue
                 return True
             return False
 
@@ -511,10 +521,16 @@ def run_benchmark(models, levels, runs, server, api_key, mode="full", report_pat
                     else:
                         scoring = score_answer(prompt_key, api_result)
                         rc = api_result.get("reasoning_content", "") or ""
+                        # store the answer text (truncated) for report inspection;
+                        # when content is empty keep the reasoning tail instead
+                        ans = (api_result.get("answer") or "").strip()
+                        if not ans:
+                            ans = ("…" + rc[-700:]) if len(rc) > 700 else rc
                         record = {
                             "model": model, "level": level, "run": run_idx,
                             "prompt_key": prompt_key, "difficulty": difficulty,
                             "success": True, **scoring,
+                            "answer_text": ans[:800],
                             "elapsed_ms": api_result["elapsed_ms"],
                             "finish_reason": api_result.get("finish_reason"),
                             "total_tokens": api_result.get("total_tokens", 0),
@@ -692,39 +708,70 @@ def write_report(path: str, models, levels, summaries, fidelity, versions, all_r
             a(f"| {level} | " + " | ".join(cells) + " |")
         a("")
 
-    # ── Per-prompt detail ──
+    # ── Per-prompt matrix (prompts × levels — compact pivot) ──
     a("## Per-prompt results")
     a("")
-    a("Each prompt × level cell: correctness, reasoning length, wall time, and the "
-      "model's answer (truncated). Lets you inspect WHY a level scores the way it does.")
+    a("One row per problem: ✅ pass / ⚠ wrong answer / ❌ no answer / ⏭ skipped, "
+      "with reasoning chars in each level column. Full answers for the "
+      "discriminating cells (not passed at every level) follow below.")
     for model in models:
         a(f"### {model}")
         a("")
-        a("| Prompt | Level | Correct | Reasoning chars | Time | Answer (truncated) |")
-        a("|---|---|---|---|---|---|")
+        a("| Problem | Tier | " + " | ".join(levels) + " |")
+        a("|---|---|" + "---|" * len(levels))
         for prompt_key, difficulty, _ in PROMPTS:
-            row_levels = [l for l in levels
-                          if any(r["model"] == model and r["level"] == l and r["prompt_key"] == prompt_key
-                                 for r in all_results)]
-            for level in row_levels:
+            cells = []
+            for level in levels:
+                rs = [r for r in all_results if r["model"] == model and r["level"] == level
+                      and r["prompt_key"] == prompt_key]
+                if not rs:
+                    cells.append("·")
+                    continue
+                r = rs[0]  # first run
+                if not r.get("success"):
+                    cells.append("⏭")
+                    continue
+                mark = "✅" if r["correct_answer"] else ("⚠" if r["valid_response"] else "❌")
+                rc = r["reasoning_chars"]
+                cells.append(f"{mark} {rc}" if rc > 0 else mark)
+            a(f"| `{prompt_key}` | {difficulty} | " + " | ".join(cells) + " |")
+        a("")
+
+    # ── Answers for discriminating cells (compact table per problem) ──
+    for model in models:
+        interesting = []
+        for prompt_key, difficulty, _ in PROMPTS:
+            outcomes = {}
+            for level in levels:
+                rs = [r for r in all_results if r["model"] == model and r["level"] == level
+                      and r["prompt_key"] == prompt_key and r.get("success")]
+                if rs:
+                    outcomes[level] = rs[0]["correct_answer"]
+            if len(outcomes) > 1 or (outcomes and not all(outcomes.values())):
+                interesting.append((prompt_key, difficulty))
+        if not interesting:
+            continue
+        a(f"### Answers — {model} (discriminating problems)")
+        a("")
+        for prompt_key, difficulty in interesting:
+            _, _, prompt_text = next(p for p in PROMPTS if p[0] == prompt_key)
+            a(f"**`{prompt_key}`** ({difficulty}) — {_md_escape(prompt_text)[:160]}")
+            a("")
+            a("| Level | Result | Answer (truncated) |")
+            a("|---|---|---|")
+            for level in levels:
                 rs = [r for r in all_results if r["model"] == model and r["level"] == level
                       and r["prompt_key"] == prompt_key]
                 if not rs:
                     continue
-                r = rs[0]  # first run
+                r = rs[0]
                 if not r.get("success"):
-                    a(f"| {prompt_key} | {level} | ⏭ skipped | — | — | {_md_escape(r.get('error', '?'))[:100]} |")
+                    a(f"| {level} | ⏭ skipped | {_md_escape(r.get('error', '?'))[:120]} |")
                     continue
                 mark = "✅" if r["correct_answer"] else ("⚠" if r["valid_response"] else "❌")
-                # answer may live in reasoning_content when content is empty
-                ans_text = r.get("answer") or ""
-                if not ans_text.strip():
-                    rc_tail = (r.get("reasoning_content") or "")[-200:]
-                    ans_text = ("…" if len(r.get("reasoning_content") or "") > 200 else "") + rc_tail
-                ans = _md_escape(ans_text)[:150]
-                a(f"| {prompt_key} | {level} | {mark} | {r['reasoning_chars']} | "
-                  f"{r['elapsed_ms']/1000:.1f}s | {ans} |")
-        a("")
+                ans_text = (r.get("answer_text") or "").strip() or "(empty)"
+                a(f"| {level} | {mark} | {_md_escape(ans_text)[:200]} |")
+            a("")
 
     # ── Interpretation notes (auto-generated observations) ──
     a("## Notes")
@@ -791,19 +838,29 @@ def write_report(path: str, models, levels, summaries, fidelity, versions, all_r
         for r in failed[:20]:
             a(f"- {r['model']} @ {r['level']} — {r['prompt_key']}: {r.get('error', '?')[:120]}")
 
-    # ── Wire fidelity (plugin params → backend) ──
+    # ── Wire fidelity (synthetic — details only on failure) ──
     a("")
     a("## Wire fidelity (plugin params → backend)")
     a("")
-    a("| Model | Level | Check | Result | Detail |")
-    a("|---|---|---|---|---|")
+    fid_items = []
     for f in fidelity:
-        # f is a 5-tuple from the live run, or a dict from the JSON path
         if isinstance(f, dict):
-            m, l, lb, ok, dt = f["model"], f["level"], f["label"], f["ok"], f["detail"]
+            fid_items.append((f["model"], f["level"], f["label"], f["ok"], f["detail"]))
         else:
-            m, l, lb, ok, dt = f
-        a(f"| {m} | {l} | {lb} | {'✅' if ok else '❌'} | {dt} |")
+            fid_items.append(tuple(f))
+    fid_ok = sum(1 for _, _, _, ok, _ in fid_items if ok)
+    if fid_ok == len(fid_items):
+        a(f"✅ **{fid_ok}/{len(fid_items)} checks passed** — every plugin-tuned param "
+          f"(P2 budget, effortMap, P3 sampling, P5 offParams) reached the backend and "
+          f"had its expected effect.")
+    else:
+        a(f"❌ **{fid_ok}/{len(fid_items)} checks passed** — failures below:")
+        a("")
+        a("| Model | Level | Check | Detail |")
+        a("|---|---|---|---|")
+        for m, l, lb, ok, dt in fid_items:
+            if not ok:
+                a(f"| {m} | {l} | {lb} | {dt} |")
 
     failed = [r for r in all_results if not r["success"] and not r.get("template_rejection")]
 
@@ -823,6 +880,11 @@ def write_report(path: str, models, levels, summaries, fidelity, versions, all_r
     a("Scoring: keyword match with digit-boundary guards; all answers "
       "machine-verified before inclusion. Prompts and keywords live in "
       "`support/thinking-benchmark.py` (PROMPTS / ANSWER_KEYWORDS).")
+    a("")
+    a("**Token-count caveat:** `completion_tokens` includes MTP draft tokens for "
+      "multi-token-prediction models (Qwen3.6-MTP variants), so its totals are not "
+      "comparable to dense models (Qwen3.8). Use reasoning chars and wall time "
+      "for cross-model comparison.")
     a("")
     a("_Generated by `support/thinking-benchmark.py --report`. Re-run after every pi / "
       "plugin / server version bump and diff against the previous report._")
