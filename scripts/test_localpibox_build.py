@@ -33,10 +33,9 @@ def test_build_load_env_success(tmpdir):
         "LPB_NODE_VERSION=24\n"
         "LPB_VSCODIUM_VERSION=1.126.04524\n"
     )
-    (tmpdir / "lpb.conf.env").write_text("LPB_MAX_TOKENS_CONTEXT_RATIO=0.06\n")
+    (tmpdir / "lpb.conf.env").write_text("# no required conf vars (ratio retired)\n")
     env = build.load_build_env(tmpdir.path)
     assert env["LPB_IMAGE_CLI"] == "ghcr.io/lpb-stack/devstack:cli"
-    assert env["LPB_MAX_TOKENS_CONTEXT_RATIO"] == "0.06"
 
 
 def test_build_load_env_missing_file(tmpdir):
@@ -50,7 +49,7 @@ def test_build_load_env_missing_file(tmpdir):
 
 def test_build_load_env_missing_var(tmpdir):
     for name in ("lpb.stack.env", "lpb.conf.env"):
-        (tmpdir / name).write_text("LPB_MAX_TOKENS_CONTEXT_RATIO=0.06\n")
+        (tmpdir / name).write_text("# no required conf vars (ratio retired)\n")
     try:
         build.load_build_env(tmpdir.path)
         assert False, "should raise RuntimeError"
@@ -64,7 +63,7 @@ def test_build_load_env_expands_home(tmpdir):
         "LPB_CONFIG_FORK=c\nLPB_CONFIG_REF=m\nLPB_NODE_VERSION=n\nLPB_VSCODIUM_VERSION=v\n"
     )
     (tmpdir / "lpb.conf.env").write_text(
-        "LPB_MAX_TOKENS_CONTEXT_RATIO=0.06\nLPB_STATE_DIR=${HOME}/.lpb-stack/state\n"
+        "LPB_STATE_DIR=${HOME}/.lpb-stack/state\n"
     )
     env = build.load_build_env(tmpdir.path)
     assert env["LPB_STATE_DIR"] == os.path.expanduser("~") + "/.lpb-stack/state"
@@ -75,7 +74,6 @@ def test_build_build_args_with_fake_git(tmpdir):
         "LPB_PI_VERSION": "0.84.4",
         "LPB_CONFIG_FORK": "cfg", "LPB_CONFIG_REF": "main",
         "LPB_NODE_VERSION": "24", "LPB_VSCODIUM_VERSION": "v",
-        "LPB_MAX_TOKENS_CONTEXT_RATIO": "0.06",
         "LPB_IMAGE_CLI": "cli", "LPB_IMAGE_WEB": "web",
     }
     (tmpdir / "VERSION").write_text("0.9.9-test\n")
@@ -99,7 +97,6 @@ def test_build_build_args_git_fail(tmpdir):
         "LPB_PI_VERSION": "0.84.4",
         "LPB_CONFIG_FORK": "cfg", "LPB_CONFIG_REF": "main",
         "LPB_NODE_VERSION": "24", "LPB_VSCODIUM_VERSION": "v",
-        "LPB_MAX_TOKENS_CONTEXT_RATIO": "0.06",
         "LPB_IMAGE_CLI": "cli", "LPB_IMAGE_WEB": "web",
     }
     runner = _fake_runner({"ls-remote": ("", 128), "rev-parse": ("", 128)})

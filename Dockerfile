@@ -24,7 +24,7 @@
 
 # Source fork configuration — ARG defaults come from lpb.stack.env
 # Instead of editing this file, edit lpb.stack.env (canonical) and either:
-#   - run support/build.sh (reads lpb.stack.env + lpb.conf.env), or
+#   - run support/build.py (reads lpb.stack.env + lpb.conf.env), or
 #   - pass --build-arg per value.
 # NOTE: Docker ARG values can't reference source'd shell variables.
 ARG NODE_VERSION=24
@@ -38,7 +38,6 @@ ARG CONFIG_FORK=https://github.com/lpb-stack/config.git
 ARG CONFIG_REF=main
 
 # Runtime defaults baked from lpb.conf.env (start.sh can still override).
-ARG LPB_MAX_TOKENS_CONTEXT_RATIO=0.06
 ARG LPB_VERSION=unknown
 
 # Provenance — set via --build-arg in CI, defaults to "unknown" for local builds
@@ -52,21 +51,16 @@ FROM ubuntu:26.04 AS base
 
 ARG NODE_VERSION
 ARG VSCODIUM_VERSION
-ARG PI_FORK
-ARG PI_REF
+ARG PI_VERSION=0.84.4
 ARG PI_HEAD_SHA
 ARG CONFIG_FORK
 ARG CONFIG_REF
-ARG LPB_MAX_TOKENS_CONTEXT_RATIO
 ARG LPB_VERSION
 ARG IMAGE_REVISION
 ARG IMAGE_BUILT
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Context window / max tokens ratio — baked into image from lpb.conf.env.
-# Container-level overrides take precedence via --env or -e at runtime.
-ENV LPB_MAX_TOKENS_CONTEXT_RATIO=${LPB_MAX_TOKENS_CONTEXT_RATIO}
 # Stack/version banner value (baked from lpb.conf.env).
 ENV LPB_VERSION=${LPB_VERSION}
 # Baked from lpb.stack.env/CI — start.sh reads these for the config repo clone.
@@ -126,6 +120,15 @@ RUN --mount=type=cache,target=/home/lpb/.npm \
     printf 'allow-scripts=better-sqlite3,agent-browser,esbuild,protobufjs,@google/genai\n' >> /root/.npmrc; \
     npm install -g zod@3 agent-browser exa-mcp-server; \
     chown -R 1000:1000 /home/lpb/.npm-global
+
+# Support scripts (/opt/pi-support/*.ts) import npm globals (zod) that live
+# under the custom prefix above — bare `require` never looks in global npm
+# prefixes, so put the lib dir on Node's resolution path explicitly.
+ENV NODE_PATH=/home/lpb/.npm-global/lib/node_modules
+
+# browser-validate.ts writes its reports here — must exist and be
+# lpb-writable (the script runs as uid 1000 and cannot mkdir at /).
+RUN mkdir -p /browser-states && chown 1000:1000 /browser-states
 
 # ── Pi (mainstream, pinned npm version) ─────────────────────────────────
 # One package pulls in pi-ai/pi-tui/pi-agent-core/pi-client as dependencies.

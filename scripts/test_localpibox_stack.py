@@ -73,6 +73,59 @@ def test_stack_bump_version():
             pass
 
 
+
+
+
+# ─── serverhealth: probe parsing (no network) ─────────────────────────────
+
+from localpibox.stack import serverhealth as sh_mod  # noqa: E402
+
+
+def test_serverhealth_kv_cache_hit():
+    r1 = {"usage": {"prompt_tokens": 63}}
+    r2 = {"usage": {"prompt_tokens": 63, "prompt_tokens_details": {"cached_tokens": 59}}}
+    with mock.patch.object(sh_mod, "_post", side_effect=[r1, r2]):
+        res = sh_mod.check_kv_cache("http://x", "k")
+    assert res["ok"] is True, res
+
+
+def test_serverhealth_kv_cache_miss():
+    r1 = {"usage": {"prompt_tokens": 63}}
+    r2 = {"usage": {"prompt_tokens": 63}}
+    with mock.patch.object(sh_mod, "_post", side_effect=[r1, r2]):
+        res = sh_mod.check_kv_cache("http://x", "k")
+    assert res["ok"] is False and "re-prefilled" in res["detail"], res
+
+
+def test_serverhealth_budget_marker_found():
+    r = {"choices": [{"message": {"reasoning_content": "", "content": "Budget exceeded. 4"}}]}
+    with mock.patch.object(sh_mod, "_post", return_value=r):
+        res = sh_mod.check_budget_message("http://x", "k")
+    assert res["ok"] is True, res
+
+
+def test_serverhealth_budget_marker_missing():
+    r = {"choices": [{"message": {"reasoning_content": "hmm", "content": "4"}}]}
+    with mock.patch.object(sh_mod, "_post", return_value=r):
+        res = sh_mod.check_budget_message("http://x", "k")
+    assert res["ok"] is False and "--reasoning-budget-message" in res["fix"], res
+
+
+def test_serverhealth_probe_failure():
+    import urllib.error
+    with mock.patch.object(sh_mod, "_post", side_effect=urllib.error.URLError("down")):
+        res = sh_mod.check_kv_cache("http://x", "k")
+    assert res["ok"] is False and "probe failed" in res["detail"], res
+
+
+def test_serverhealth_run_checks_labels():
+    with mock.patch.object(sh_mod, "check_kv_cache", return_value={"ok": True, "detail": "", "fix": ""}), \
+         mock.patch.object(sh_mod, "check_budget_message", return_value={"ok": False, "detail": "d", "fix": "f"}):
+        checks = sh_mod.run_server_checks("http://x", "k")
+    assert len(checks) == 2
+    assert "KV/prompt cache" in checks[0]["label"]
+    assert "reasoning-budget-full" in checks[1]["label"]
+
 def main() -> int:
     return run_lpbx_suite("localpibox.stack tests", globals())
 

@@ -1,8 +1,9 @@
 """Full-stack validation: check every alignment dimension against a pipeline.
 
 Covers: VERSION file, config repo branch, workspace repo branches/symlinks,
-extension alignment, stack env refs, settings.json pins, and (informational)
-pi fork branch consistency.
+pipeline consistency (no mixed dev/main state), extension alignment,
+worktree state (config clean, extension-repo WIP report), stack env refs,
+and settings.json pins.
 """
 
 from __future__ import annotations
@@ -21,8 +22,10 @@ from .repos import (
     _DEVSTACK_ROOT,
 )
 from .version import _find_version_file, expected_branch, expected_pin_version, get_stack_env, get_stack_env_base, get_version
+from .serverhealth import run_server_checks
 from .workspace import (
     _detached_ref,
+    _dirty_files,
     _get_pinned_versions,
     _read_settings,
     _repo_branch,
@@ -89,10 +92,14 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
               "no VERSION file found", "Ensure devstack/VERSION exists")
 
     # ── 2. Config repo ─────────────────────────────────────────────────
+    # branch_map collects (name, actual_branch, expected_branch) for the
+    # at-a-glance pipeline-consistency check at the end of section 3.
+    branch_map: list[tuple[str, str, str]] = []
     config_path = Path(DEFAULT_AGENT_DIR)
     if (config_path / ".git").exists():
         config_branch = _repo_branch(config_path)
         config_expected = expected_branch("config", pipeline)
+        branch_map.append(("config", config_branch, config_expected))
         check(
             "Config repo on correct branch",
             config_branch == config_expected,
@@ -120,16 +127,65 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
         branch = _repo_branch(path)
         head = _repo_head(path)
         details = f"branch={branch} ({head})"
+        branch_map.append((name, branch, expected))
 
         if is_sym:
             ws_path = WORKSPACE_ROOT / name
             symlink_ok = ws_path.is_symlink()
             check(f"  {name} symlink", symlink_ok,
                   f"{ws_path} → {ws_path.resolve() if symlink_ok else 'broken'}")
-            details = "symlink ✅" if symlink_ok else "symlink ❌"
 
         check(f"  {name} branch", branch == expected, details,
               f"cd {path} && git checkout {expected}")
+
+    # At-a-glance consistency: every repo must sit on its branch for this
+    # pipeline — a partial sync leaves a mixed dev/main state, and that
+    # shows up here in one line instead of scattered per-repo failures.
+    bad = [(n, b) for n, b, e in branch_map if b != e]
+    check(
+        "Pipeline consistency (no mixed state)",
+        not bad,
+        ", ".join(f"{n}={b}" for n, b, _ in branch_map) or "no repos found",
+        f"lpb-devstack --tag {pipeline} workspace sync",
+    )
+
+    # ── 3b. Worktree state — leftover uncommitted changes ─────────────
+    cons.info("")
+    cons.info("  Worktree state:")
+
+    # config repo: everything runtime is gitignored there, so a dirty
+    # worktree means uncommitted template/skill/doc content — always an
+    # anomaly, and a hard check.
+    if (config_path / ".git").exists():
+        cfg_dirty = _dirty_files(config_path)
+        check(
+            "  config worktree clean",
+            not cfg_dirty,
+            "uncommitted changes:" if cfg_dirty else "clean",
+            "git -C ~/.pi/agent status — commit or discard first",
+        )
+        if cfg_dirty:
+            for line in cfg_dirty[:5]:
+                cons.warn(f"     {line.strip()}")
+
+    # Extension code repos: uncommitted WIP is normal during dev — report
+    # it (it previously sat invisible until a sync skipped the repo), but
+    # don't block on it. devstack's own tree is judged by the pre-commit
+    # hook (unstaged check), not here.
+    dirty_ext: list[str] = []
+    for name, is_sym, is_ext, dev_branch, main_branch in WORKSPACE_REPOS:
+        if name == "devstack":
+            continue
+        path = _resolve_repo_path(name)
+        if path is None:
+            continue
+        files = _dirty_files(path)
+        if files:
+            dirty_ext.append(f"{name} ({len(files)} file(s))")
+    if dirty_ext:
+        cons.warn(f"  WIP in extension repos (not blocking): {', '.join(dirty_ext)}")
+    else:
+        cons.info("  extension repos: no uncommitted changes")
 
     # ── 4. Extension repos match workspace ─────────────────────────────
     cons.info("")
@@ -226,6 +282,37 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     # ── 7. (pi fork branch consistency removed — de-forked 2026-08-31:
     #       the lpb-stack/pi fork is retired; mainstream pi installs from
     #       the npm registry at LPB_PI_VERSION, so fork branch state is moot)
+
+    # ── 7. Lemonade server health (external host — live probes) ───────
+    # The server is user-managed outside this stack; after an upgrade its
+    # startup flags can silently regress. Probe what HTTP exposes.
+    cons.info("")
+    cons.info("  Lemonade server:")
+
+    try:
+        import json as _json
+        from pathlib import Path as _Path
+        auth = _json.loads((_Path.home() / ".pi" / "agent" / "auth.json").read_text())
+        entry = (auth.get("lemonade") or (auth.get("providers") or {}).get("lemonade")
+                 or (auth.get("oauth") or {}).get("lemonade") or {})
+        creds = _json.loads(entry.get("refresh") or "{}")
+        base = (creds.get("baseUrl") or "").strip().rstrip("/")
+        skey = creds.get("apiKey") or entry.get("access") or ""
+        if base.startswith(("http://", "https://")) and skey:
+            # probe with the configured session model when resolvable
+            probe_model = None
+            try:
+                dm = (_read_settings(config_path) or {}).get("defaultModel")
+                if isinstance(dm, str) and dm:
+                    probe_model = dm.split("/")[-1]
+            except Exception:
+                probe_model = None
+            for chk in run_server_checks(base, skey, probe_model):
+                check(chk["label"], chk["ok"], chk["detail"], chk["fix"])
+        else:
+            cons.warn("  ⚠ Lemonade server not configured (auth.json) — skipping live probes")
+    except Exception as e:
+        cons.warn(f"  ⚠ Lemonade server probe skipped: {e}")
 
     # ── Summary ────────────────────────────────────────────────────────
     cons.info("")

@@ -138,7 +138,6 @@ BARE_NAMES=(
     HOST
     CONNECTION_TOKEN
     DEVCONTAINER_WORKSPACE_DIR
-    MAX_TOKENS_CONTEXT_RATIO
     GITHUB_TOOLSETS
     AGENT_BROWSER_ARGS
     AGENT_BROWSER_MAX_OUTPUT
@@ -146,6 +145,7 @@ BARE_NAMES=(
     AGENT_BROWSER_CONFIRM_ACTIONS
     AGENT_BROWSER_IDLE_TIMEOUT_MS
     AGENT_BROWSER_SESSION
+    AGENT_BROWSER_ALLOWED_DOMAINS
 )
 # Container-safe fallbacks per bare name (absent = pure LPB_→bare promotion).
 declare -A BARE_FALLBACKS=(
@@ -155,7 +155,6 @@ declare -A BARE_FALLBACKS=(
     [HOST]="0.0.0.0"
     [CONNECTION_TOKEN]="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen 2>/dev/null || python3 -c 'import uuid;print(uuid.uuid4())')"
     [DEVCONTAINER_WORKSPACE_DIR]="/home/lpb/workspace"
-    [MAX_TOKENS_CONTEXT_RATIO]="0.06"
     [GITHUB_TOOLSETS]="all"
     [AGENT_BROWSER_ARGS]="--no-sandbox,--no-first-run,--disable-gpu,--disable-crashpad"
     [AGENT_BROWSER_MAX_OUTPUT]="4000"
@@ -213,7 +212,6 @@ debug "LEMONADE_BASE_URL=$LEMONADE_BASE_URL"
 debug "WORKSPACE_DIR=$WORKSPACE_DIR"
 debug "ED_PORT=$ED_PORT"
 debug "EDITOR_HOST=$HOST"
-debug "MAX_TOKENS_CONTEXT_RATIO=$MAX_TOKENS_CONTEXT_RATIO"
 
 # ─── 2. RESOLVE PROJECT DIRECTORY & LOAD .ENV ──────────────────────────────
 # The project is a subdirectory of the workspace (e.g. "/home/lpb/workspace/<project>")
