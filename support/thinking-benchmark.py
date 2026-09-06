@@ -591,7 +591,7 @@ def write_report(path: str, models, levels, summaries, fidelity, versions, all_r
     a("# Thinking Benchmark Report")
     a("")
     a(f"- **Captured:** {versions['captured_at']}")
-    a(f"- **Server:** `{versions['server']}` (build: `{versions.get('server_build', '?')}`)")
+    a(f"- **Server build:** `{versions.get('server_build', '?')}`")
     a(f"- **pi:** {versions.get('pi', '?')}  ")
     a(f"- **lemonade-pi-plugin:** {versions.get('plugin', '?')}")
     a("")
@@ -615,7 +615,8 @@ def write_report(path: str, models, levels, summaries, fidelity, versions, all_r
     a("")
     a("| Model | Level | Check | Result | Detail |")
     a("|---|---|---|---|---|")
-    for model, level, label, ok, detail in fidelity:
+    for f in fidelity:
+        model, level, label, ok, detail = f
         a(f"| {model} | {level} | {label} | {'✅' if ok else '❌'} | {detail} |")
 
     failed = [r for r in all_results if not r["success"] and not r.get("template_rejection")]
