@@ -51,6 +51,8 @@ CONTENT: list[tuple[str, str]] = [
     ("doc/config-repo.md", "reference/config-repo.md"),
     ("doc/lpb-memory-overview.md", "reference/lpb-memory-overview.md"),
     ("doc/forking.md", "reference/forking.md"),
+    ("doc/thinking-support.md", "reference/thinking-support.md"),
+    ("doc/thinking-benchmark.md", "reference/thinking-benchmark.md"),
 ]
 
 # (name, path, role, dev_branch, stable_branch, tagged_by_ci)

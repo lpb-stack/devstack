@@ -75,4 +75,6 @@ nav:
   - "Stack internals":
     - lpb-memory: reference/lpb-memory-overview.md
     - Fork improvements: reference/fork-improvements.md
+    - Thinking support: reference/thinking-support.md
+    - Thinking benchmark: reference/thinking-benchmark.md
   - Contributing: contributing.md
