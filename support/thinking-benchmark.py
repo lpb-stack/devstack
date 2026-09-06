@@ -261,29 +261,54 @@ def api_call(model: str, payload: dict, server: str, api_key: str, timeout: int 
 # ─── Prompts & scoring ────────────────────────────────────────────────────────
 
 PROMPTS = {
-    ("math_easy", "easy",
-     "A gardener plants 4 rows of 6 tomato plants, then adds 3 more rows of 6 each. How many total?"),
-    ("logic_easy", "easy",
-     "All dogs can swim. Max is a dog. Can Max swim? Answer yes or no."),
+    # ── Easy (GSM8K-style, 2 steps — expect pass in both modes) ──
+    ("gsm_clips", "easy",
+     "Natalia sold clips to 48 of her friends in April, and then she sold half as many clips in May. How many clips did Natalia sell altogether?"),
+    ("gsm_babysit", "easy",
+     "Weng earns $12 an hour for babysitting. Yesterday she just worked 50 minutes. How much did she earn?"),
+    ("gsm_letter", "easy",
+     "James writes a 3-page letter to 2 different friends twice a week. How many pages does he write a year?"),
 
-    ("math_med", "medium",
-     "Solve: number * 3 + 5 = 320 - (number * 4). What is x? Show the equation."),
-    ("logic_med", "medium",
-     "Alice Bob Charlie each have number 1 2 or 3. Alice not largest/smallest. Bob > Charlie. Charlie != 3."),
+    # ── Medium (GSM8K multi-step / MATH L3 — expect non-thinking to miss some) ──
+    ("gsm_wallet", "medium",
+     "Betty is saving money for a new wallet which costs $100. Betty has only half of the money she needs. Her parents decided to give her $15 for that purpose, and her grandparents twice as much. How much more money does Betty need?"),
+    ("gsm_book", "medium",
+     "Julie is reading a 120-page book. Yesterday she was able to read 12 pages and today she read twice as many pages as yesterday. If she wants to read half of the remaining pages tomorrow, how many pages should she read?"),
+    ("gsm_flowers", "medium",
+     "Mark planted 10 yellow flowers. He planted 80% more purple flowers than yellow flowers. He also planted 25% as many green flowers as the total of yellow and purple flowers combined. How many flowers did Mark plant in total?"),
+    ("math_heads_legs", "medium",
+     "A farmer has chickens and rabbits in a field. There are 40 heads and 100 legs in total. How many rabbits does the farmer have?"),
 
-    ("math_hard", "hard",
-     "A farmer has sheep. If he sells 140, half as many left as if he didn't sell any. Then buys 2 more. How many?"),
-    ("causal_med", "medium",
-     "It is 95F outside. You leave a scoop of vanilla ice cream on the sidewalk for 30 minutes. What happens and why?"),
+    # ── Hard (MATH L4-5 style — expect only thinking to pass) ──
+    ("math_div_or", "hard",
+     "How many positive integers less than 1000 are divisible by 7 or 11?"),
+    ("math_balls_boxes", "hard",
+     "In how many ways can 3 indistinguishable balls be placed into 4 distinguishable boxes?"),
+    ("math_coin_prob", "hard",
+     "A fair coin is flipped 5 times. What is the probability of getting exactly 3 heads? Express your answer as a fraction in lowest terms."),
+    ("math_log_eq", "hard",
+     "Solve for x: log base 2 of x plus log base 2 of (x minus 2) equals 4. Give the exact value of x."),
+    ("math_sequence", "hard",
+     "A sequence starts 2, 3, 5, 9, 17 and each term after the first is one less than twice the previous term. What is the sixth term of the sequence?"),
 }
 
+# Expected answer keywords — used for automated correctness checking.
+# Numeric keywords are matched with digit-boundary guards (no substring
+# false-positives like "10" inside "100"). Sources: GSM8K (openai/grade-school-math)
+# and MATH (hendrycks/math) style problems, adapted for single-shot scoring.
 ANSWER_KEYWORDS = {
-    "math_easy":   ["42"],
-    "logic_easy":  ["yes"],
-    "math_med":    ["120", "=120", "= 120", "x = 120", "x=120"],
-    "logic_med":   ["alice", "bob", "charlie"],
-    "math_hard":   ["142"],
-    "causal_med":  ["melt", "melting"],
+    "gsm_clips":        ["72"],
+    "gsm_babysit":      ["10", "$10"],
+    "gsm_letter":       ["624"],
+    "gsm_wallet":       ["5", "$5"],
+    "gsm_book":         ["42"],
+    "gsm_flowers":      ["35"],
+    "math_heads_legs":  ["10"],
+    "math_div_or":      ["220"],
+    "math_balls_boxes": ["20"],
+    "math_coin_prob":   ["5/16"],
+    "math_log_eq":      ["\u221a17", "sqrt(17)"],
+    "math_sequence":    ["33"],
 }
 
 
@@ -505,7 +530,11 @@ def run_benchmark(models, levels, runs, server, api_key, mode="full", report_pat
                         ts = time.strftime("%Y%m%d-%H%M%S")
                         sf = f"/tmp/thinking_bench_{model.replace('-', '_')}_{level}_{ts}.json"
                         with open(sf, "w") as f:
-                            json.dump({"versions": versions, "records": all_results}, f, indent=2)
+                            json.dump({"versions": versions, "records": all_results,
+                                       "fidelity": [{"model": m, "level": l, "label": lb, "ok": ok, "detail": dt}
+                                                    for m, l, lb, ok, dt in fidelity],
+                                       "wire_params": {f"{m}|{l}": p for (m, l), p in wire_params.items()}},
+                                      f, indent=2)
 
                     status = "OK" if scoring["correct_answer"] else ("?" if scoring["valid_response"] else "NO")
                     rc_display = f"{record['reasoning_chars']:5d}r" if record['reasoning_chars'] > 0 else "     0r"
@@ -518,7 +547,10 @@ def run_benchmark(models, levels, runs, server, api_key, mode="full", report_pat
         timestamp = time.strftime("%Y%m%d-%H%M%S")
         model_file = f"/tmp/thinking_bench_{model.replace('-', '_')}_{timestamp}.json"
         with open(model_file, "w") as f:
-            json.dump({"versions": versions, "records": all_results}, f, indent=2)
+            json.dump({"versions": versions, "records": all_results,
+                       "fidelity": [{"model": m, "level": l, "label": lb, "ok": ok, "detail": dt}
+                                    for m, l, lb, ok, dt in fidelity],
+                       "wire_params": {f"{m}|{l}": p for (m, l), p in wire_params.items()}}, f, indent=2)
         print(f"  Saved {len(all_results)} records to {model_file}")
 
     # ─── Summary ──────────────────────────────────────────────────────────
@@ -731,6 +763,25 @@ def write_report(path: str, models, levels, summaries, fidelity, versions, all_r
         a(f"- **Varying prompts:** {', '.join(sorted(varying))} scored differently across "
           f"cells — consistent with sampling variance on near-boundary problems, not a "
           f"level effect (answers are stochastic at temperature 1.0).")
+    # thinking lift: prompts failed at off but passed at some on-level
+    for model in models:
+        off_fails = {r["prompt_key"] for r in all_results
+                     if r["model"] == model and r["level"] == "off"
+                     and r.get("success") and not r["correct_answer"]}
+        if not off_fails:
+            continue
+        rescued, still = [], []
+        for pk in sorted(off_fails):
+            on_passes = [r["level"] for r in all_results
+                         if r["model"] == model and r["prompt_key"] == pk and r["level"] != "off"
+                         and r.get("success") and r["correct_answer"]]
+            (rescued if on_passes else still).append(pk)
+        if rescued:
+            a(f"- **{model}: thinking lift** — {', '.join(rescued)} fail(s) at off but "
+              f"pass with thinking ON; this is the measurable benefit of reasoning mode.")
+        if still:
+            a(f"- **{model}: persistent failure** — {', '.join(still)} fails at ALL levels "
+              f"(off and on): a model capability gap on that problem, not a thinking-level effect.")
 
     failed = [r for r in all_results if not r["success"] and not r.get("template_rejection")]
     if failed:
@@ -756,6 +807,22 @@ def write_report(path: str, models, levels, summaries, fidelity, versions, all_r
 
     failed = [r for r in all_results if not r["success"] and not r.get("template_rejection")]
 
+    a("")
+    a("## Test set & sources")
+    a("")
+    a(f"{len(PROMPTS)} single-shot problems with deterministic answers, adapted from "
+      "battle-tested public benchmarks:")
+    a("")
+    a("- **Easy (3):** GSM8K-style 2-step word problems "
+      "(openai/grade-school-math) — expected to pass in both modes")
+    a("- **Medium (4):** GSM8K multi-step + MATH L3-style "
+      "(hendrycks/math) — non-thinking mode misses some")
+    a("- **Hard (5):** MATH L4-L5 style (combinatorics, number theory, "
+      "probability, exact-value algebra) — expected to require thinking")
+    a("")
+    a("Scoring: keyword match with digit-boundary guards; all answers "
+      "machine-verified before inclusion. Prompts and keywords live in "
+      "`support/thinking-benchmark.py` (PROMPTS / ANSWER_KEYWORDS).")
     a("")
     a("_Generated by `support/thinking-benchmark.py --report`. Re-run after every pi / "
       "plugin / server version bump and diff against the previous report._")
