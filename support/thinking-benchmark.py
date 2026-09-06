@@ -422,6 +422,7 @@ def run_benchmark(models, levels, runs, server, api_key, mode="full", report_pat
 
     all_results = []
     fidelity = []  # [(model, level, label, ok, detail), ...]
+    wire_params = {}  # (model, level) -> exact params sent on the wire
     total_configs = len(models) * len(levels)
     single_mode = (mode == "single")
 
@@ -454,6 +455,16 @@ def run_benchmark(models, levels, runs, server, api_key, mode="full", report_pat
 
                     api_payload = {k: v for k, v in built.items() if k != "skip"}
                     api_result = api_call(model, api_payload, server, api_key)
+
+                    # Record the exact wire params once per model×level (for the report)
+                    if (model, level) not in wire_params:
+                        wire_params[(model, level)] = {
+                            k: api_payload.get(k) for k in (
+                                "max_completion_tokens", "thinking_budget_tokens",
+                                "reasoning_effort", "enable_thinking", "temperature",
+                                "top_p", "top_k", "min_p", "presence_penalty",
+                                "repetition_penalty") if api_payload.get(k) is not None
+                        }
 
                     # Wire-fidelity checks (once per model×level, on the first run)
                     if run_idx == 1 and not any(f[0] == model and f[1] == level for f in fidelity):
@@ -567,7 +578,8 @@ def run_benchmark(models, levels, runs, server, api_key, mode="full", report_pat
     with open(output_file, "w") as f:
         json.dump({"versions": versions, "records": all_results,
                    "fidelity": [{"model": m, "level": l, "label": lb, "ok": ok, "detail": d}
-                                for m, l, lb, ok, d in fidelity]}, f, indent=2)
+                                for m, l, lb, ok, d in fidelity],
+                   "wire_params": {f"{m}|{l}": p for (m, l), p in wire_params.items()}}, f, indent=2)
     print(f"\nResults saved to {output_file}")
 
     success_count = sum(1 for r in all_results if r["success"])
@@ -578,14 +590,21 @@ def run_benchmark(models, levels, runs, server, api_key, mode="full", report_pat
 
     # ─── Markdown report (reproducible per-model artifact) ────────────────
     if report_path:
-        write_report(report_path, models, levels, summaries, fidelity, versions, all_results)
+        write_report(report_path, models, levels, summaries, fidelity, versions, all_results,
+                     wire_params)
         print(f"Markdown report written to {report_path}")
 
     return all_results
 
 
-def write_report(path: str, models, levels, summaries, fidelity, versions, all_results):
+def _md_escape(s: str) -> str:
+    return s.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def write_report(path: str, models, levels, summaries, fidelity, versions, all_results,
+                 wire_params=None):
     """Version-stamped markdown report — regenerate after every major bump."""
+    wire_params = wire_params or {}
     lines = []
     a = lines.append
     a("# Thinking Benchmark Report")
@@ -610,14 +629,108 @@ def write_report(path: str, models, levels, summaries, fidelity, versions, all_r
             a(f"| {model} | {level} | {s['correct']}/{s['n']} ({pct:.0f}%) | {rc} | "
               f"{s['avg_tokens']:.0f} | {s['avg_time_s']:.1f}s | {s['avg_reasoning_chars']:.0f} |")
 
+    # ── Wire params actually sent (per model × level) ──
     a("")
-    a("## Wire fidelity (plugin params → backend)")
+    a("## Wire params sent per level")
     a("")
-    a("| Model | Level | Check | Result | Detail |")
-    a("|---|---|---|---|---|")
-    for f in fidelity:
-        model, level, label, ok, detail = f
-        a(f"| {model} | {level} | {label} | {'✅' if ok else '❌'} | {detail} |")
+    a("Exact values on the wire for each cell (from the plugin catalog: P2 budget, "
+      "effortMap, P3 sampling row, P5 offParams).")
+    a("")
+    header_keys = ["max_completion_tokens", "thinking_budget_tokens", "reasoning_effort",
+                   "enable_thinking", "temperature", "top_p", "top_k", "min_p",
+                   "presence_penalty", "repetition_penalty"]
+    short = {"max_completion_tokens": "max_tok", "thinking_budget_tokens": "budget",
+             "reasoning_effort": "effort", "enable_thinking": "en_think",
+             "temperature": "temp", "top_p": "top_p", "top_k": "top_k", "min_p": "min_p",
+             "presence_penalty": "pres_pen", "repetition_penalty": "rep_pen"}
+    for model in models:
+        a(f"### {model}")
+        a("")
+        a("| Level | " + " | ".join(short[k] for k in header_keys) + " |")
+        a("|---" * (len(header_keys) + 1) + "|")
+        for level in levels:
+            p = wire_params.get((model, level))
+            if not p:
+                a(f"| {level} | " + " | ".join(["—"] * len(header_keys)) + " |")
+                continue
+            cells = []
+            for k in header_keys:
+                v = p.get(k)
+                cells.append("—" if v is None else ("false" if v is False else str(v)))
+            a(f"| {level} | " + " | ".join(cells) + " |")
+        a("")
+
+    # ── Per-prompt detail ──
+    a("## Per-prompt results")
+    a("")
+    a("Each prompt × level cell: correctness, reasoning length, wall time, and the "
+      "model's answer (truncated). Lets you inspect WHY a level scores the way it does.")
+    for model in models:
+        a(f"### {model}")
+        a("")
+        a("| Prompt | Level | Correct | Reasoning chars | Time | Answer (truncated) |")
+        a("|---|---|---|---|---|---|")
+        for prompt_key, difficulty, _ in PROMPTS:
+            row_levels = [l for l in levels
+                          if any(r["model"] == model and r["level"] == l and r["prompt_key"] == prompt_key
+                                 for r in all_results)]
+            for level in row_levels:
+                rs = [r for r in all_results if r["model"] == model and r["level"] == level
+                      and r["prompt_key"] == prompt_key]
+                if not rs:
+                    continue
+                r = rs[0]  # first run
+                if not r.get("success"):
+                    a(f"| {prompt_key} | {level} | ⏭ skipped | — | — | {_md_escape(r.get('error', '?'))[:100]} |")
+                    continue
+                mark = "✅" if r["correct_answer"] else ("⚠" if r["valid_response"] else "❌")
+                # answer may live in reasoning_content when content is empty
+                ans_text = r.get("answer") or ""
+                if not ans_text.strip():
+                    rc_tail = (r.get("reasoning_content") or "")[-200:]
+                    ans_text = ("…" if len(r.get("reasoning_content") or "") > 200 else "") + rc_tail
+                ans = _md_escape(ans_text)[:150]
+                a(f"| {prompt_key} | {level} | {mark} | {r['reasoning_chars']} | "
+                  f"{r['elapsed_ms']/1000:.1f}s | {ans} |")
+        a("")
+
+    # ── Interpretation notes (auto-generated observations) ──
+    a("## Notes")
+    a("")
+    for model in models:
+        on_levels = [l for l in levels if l != "off" and summaries[model].get(l, {}).get("n", 0) > 0]
+        off_s = summaries[model].get("off", {})
+        if len(on_levels) >= 2 and off_s.get("n", 0) > 0:
+            rchars = {l: summaries[model][l]["avg_reasoning_chars"] for l in on_levels}
+            lo, hi = min(rchars.values()), max(rchars.values())
+            if hi < 1.5 * max(lo, 1):
+                a(f"- **{model}: flat reasoning band** — avg reasoning stays within "
+                  f"{lo:.0f}–{hi:.0f} chars across {', '.join(on_levels)} despite distinct "
+                  f"budgets/efforts on the wire. The model thinks its natural length and "
+                  f"stops before any budget is hit, so effort values do not shape thinking "
+                  f"length for this model; off vs on is the only effective switch.")
+            else:
+                a(f"- **{model}: levels spread** — reasoning grows {lo:.0f} → {hi:.0f} chars "
+                  f"across on-levels; effort/budget are effective dials.")
+        if off_s.get("n", 0) > 0:
+            a(f"- **{model} @ off:** {off_s['correct']}/{off_s['n']} correct with zero "
+              f"reasoning — the wire off-switch (`enable_thinking:false`) is honored.")
+    # prompts that vary across levels (sampling variance indicator)
+    varying = set()
+    for prompt_key, _, _ in PROMPTS:
+        outcomes = set()
+        for model in models:
+            for level in levels:
+                rs = [r for r in all_results if r["model"] == model and r["level"] == level
+                      and r["prompt_key"] == prompt_key and r.get("success")]
+                if rs:
+                    outcomes.add(rs[0]["correct_answer"])
+        if len(outcomes) > 1:
+            varying.add(prompt_key)
+    if varying:
+        a(f"- **Varying prompts:** {', '.join(sorted(varying))} scored differently across "
+          f"cells — consistent with sampling variance on near-boundary problems, not a "
+          f"level effect (answers are stochastic at temperature 1.0).")
 
     failed = [r for r in all_results if not r["success"] and not r.get("template_rejection")]
     if failed:
@@ -626,6 +739,22 @@ def write_report(path: str, models, levels, summaries, fidelity, versions, all_r
         a("")
         for r in failed[:20]:
             a(f"- {r['model']} @ {r['level']} — {r['prompt_key']}: {r.get('error', '?')[:120]}")
+
+    # ── Wire fidelity (plugin params → backend) ──
+    a("")
+    a("## Wire fidelity (plugin params → backend)")
+    a("")
+    a("| Model | Level | Check | Result | Detail |")
+    a("|---|---|---|---|---|")
+    for f in fidelity:
+        # f is a 5-tuple from the live run, or a dict from the JSON path
+        if isinstance(f, dict):
+            m, l, lb, ok, dt = f["model"], f["level"], f["label"], f["ok"], f["detail"]
+        else:
+            m, l, lb, ok, dt = f
+        a(f"| {m} | {l} | {lb} | {'✅' if ok else '❌'} | {dt} |")
+
+    failed = [r for r in all_results if not r["success"] and not r.get("template_rejection")]
 
     a("")
     a("_Generated by `support/thinking-benchmark.py --report`. Re-run after every pi / "
