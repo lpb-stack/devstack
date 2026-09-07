@@ -450,6 +450,27 @@ def _update_pinned_versions(settings: dict, target_version: str) -> list[tuple[s
 
 # ─── Workspace: sync extension pins ───────────────────────────────────────
 
+def sync_pins_quiet(agent_dir: str | Path, target_version: str,
+                    cons: Console) -> int:
+    """Non-interactive pin update: write pins != *target_version* in
+    settings.json. Returns the number of changed extension(s); 0 if nothing
+    to do or no settings.json (a missing file is not an error here —
+    callers treat it as 'nothing to sync'). Used by `lpb-devstack bump`
+    so a VERSION commit never lands with stale pins (the pre-commit
+    validate would fail, and a post-hook sync would target the OLD
+    version)."""
+    settings = _read_settings(agent_dir)
+    if settings is None:
+        return 0
+    changed = _update_pinned_versions(settings, target_version)
+    if not changed:
+        return 0
+    _write_settings(agent_dir, settings)
+    for name, old, new in changed:
+        cons.info(f"  pin {name}: {old} → {new}")
+    return len(changed)
+
+
 def cmd_workspace_sync_pins(pipeline: str, cons: Console) -> int:
     """Sync settings.json extension pins to the pipeline's stack version."""
     agent_dir = Path(DEFAULT_AGENT_DIR)
