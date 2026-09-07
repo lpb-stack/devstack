@@ -23,6 +23,9 @@ Running `agent-browser install --with-deps` directly downloads a system Chrome a
 - **Exec bit self-healing** — Python's `zipfile.extractall()` drops Unix exec bits; `install-browser` detects and restores them automatically (Chrome crashes at startup if `chrome_crashpad_handler` is not executable)
 - **Container config merging** — writes `~/.agent-browser/config.json` with container-safe launch args, **merged** into any existing config (preserves user customizations)
 - **Version tracking** — installs from the same version JSON API that Playwright uses, keeping Chrome in sync with agent-browser's expectations
+
+### Use cases
+
 - Visual testing of web apps
 - Browser-based validation (login flows, form submission, UI testing)
 - Capturing screenshots and accessibility audits

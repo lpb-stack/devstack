@@ -161,9 +161,7 @@ jobs:
             dev)  [ -f lpb.stack.dev.env ]  && source lpb.stack.dev.env ;;
           esac
           set +a
-          echo "PI_FORK=$LPB_PI_FORK" >> "$GITHUB_OUTPUT"
-          # Use branch name for cloning (not version tag, which may not exist yet)
-          echo "PI_REF=$LPB_PI_REF" >> "$GITHUB_OUTPUT"
+          echo "PI_VERSION=$LPB_PI_VERSION" >> "$GITHUB_OUTPUT"
           # VERSION file is the single source (manual tagging — CI never bumps)
           LPB_VERSION=$(cat VERSION)
           echo "LPB_VERSION=${LPB_VERSION}" >> "$GITHUB_OUTPUT"
@@ -171,9 +169,7 @@ jobs:
           echo "CONFIG_REF=$LPB_CONFIG_REF" >> "$GITHUB_OUTPUT"
           echo "NODE_VERSION=$LPB_NODE_VERSION" >> "$GITHUB_OUTPUT"
           echo "VSCODIUM_VERSION=$LPB_VSCODIUM_VERSION" >> "$GITHUB_OUTPUT"
-          MAX_TOKENS=$(grep -E '^LPB_MAX_TOKENS_CONTEXT_RATIO=' lpb.conf.env | cut -d= -f2- | tr -d '"' 2>/dev/null || true)
-          echo "MAX_TOKENS=${MAX_TOKENS:-0.06}" >> "$GITHUB_OUTPUT"
-          sha=$(git ls-remote "$LPB_PI_FORK" "refs/heads/$LPB_PI_REF" | awk '{print $1}')
+          sha=$(git ls-remote "https://github.com/earendil-works/pi.git" "refs/tags/v${LPB_PI_VERSION}" | awk '{print $1}')
           echo "sha=${sha:-unknown}" >> "$GITHUB_OUTPUT"
           echo "stack_version=${LPB_VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -187,15 +183,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            PI_FORK=${{ steps.config.outputs.PI_FORK }}
-            PI_REF=${{ steps.config.outputs.PI_REF }}
+            PI_VERSION=${{ steps.config.outputs.PI_VERSION }}
             CONFIG_FORK=${{ steps.config.outputs.CONFIG_FORK }}
             CONFIG_REF=${{ steps.config.outputs.CONFIG_REF }}
             NODE_VERSION=${{ steps.config.outputs.NODE_VERSION }}
             VSCODIUM_VERSION=${{ steps.config.outputs.VSCODIUM_VERSION }}
             PI_HEAD_SHA=${{ steps.config.outputs.sha }}
             LPB_VERSION=${{ steps.config.outputs.LPB_VERSION }}
-            LPB_MAX_TOKENS_CONTEXT_RATIO=${{ steps.config.outputs.MAX_TOKENS }}
           secrets: |
             GIT_AUTH_TOKEN=${{ secrets.LPB_STACK_PAT }}
           no-cache: ${{ github.event.inputs.no_cache == 'true' }}
@@ -245,8 +239,7 @@ jobs:
             dev)  [ -f lpb.stack.dev.env ]  && source lpb.stack.dev.env ;;
           esac
           set +a
-          echo "PI_FORK=$LPB_PI_FORK" >> "$GITHUB_OUTPUT"
-          echo "PI_REF=$LPB_PI_REF" >> "$GITHUB_OUTPUT"
+          echo "PI_VERSION=$LPB_PI_VERSION" >> "$GITHUB_OUTPUT"
           echo "CONFIG_FORK=$LPB_CONFIG_FORK" >> "$GITHUB_OUTPUT"
           echo "CONFIG_REF=$LPB_CONFIG_REF" >> "$GITHUB_OUTPUT"
           echo "NODE_VERSION=$LPB_NODE_VERSION" >> "$GITHUB_OUTPUT"
@@ -254,9 +247,7 @@ jobs:
           # VERSION file is the single source (manual tagging — CI never bumps)
           LPB_VERSION=$(cat VERSION)
           echo "LPB_VERSION=${LPB_VERSION}" >> "$GITHUB_OUTPUT"
-          MAX_TOKENS=$(grep -E '^LPB_MAX_TOKENS_CONTEXT_RATIO=' lpb.conf.env | cut -d= -f2- | tr -d '"' 2>/dev/null || true)
-          echo "MAX_TOKENS=${MAX_TOKENS:-0.06}" >> "$GITHUB_OUTPUT"
-          sha=$(git ls-remote "$LPB_PI_FORK" "refs/heads/$LPB_PI_REF" | awk '{print $1}')
+          sha=$(git ls-remote "https://github.com/earendil-works/pi.git" "refs/tags/v${LPB_PI_VERSION}" | awk '{print $1}')
           echo "sha=${sha:-unknown}" >> "$GITHUB_OUTPUT"
           echo "stack_version=${LPB_VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -270,15 +261,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           build-args: |
-            PI_FORK=${{ steps.config.outputs.PI_FORK }}
-            PI_REF=${{ steps.config.outputs.PI_REF }}
+            PI_VERSION=${{ steps.config.outputs.PI_VERSION }}
             CONFIG_FORK=${{ steps.config.outputs.CONFIG_FORK }}
             CONFIG_REF=${{ steps.config.outputs.CONFIG_REF }}
             NODE_VERSION=${{ steps.config.outputs.NODE_VERSION }}
             VSCODIUM_VERSION=${{ steps.config.outputs.VSCODIUM_VERSION }}
             PI_HEAD_SHA=${{ steps.config.outputs.sha }}
             LPB_VERSION=${{ steps.config.outputs.LPB_VERSION }}
-            LPB_MAX_TOKENS_CONTEXT_RATIO=${{ steps.config.outputs.MAX_TOKENS }}
           secrets: |
             GIT_AUTH_TOKEN=${{ secrets.LPB_STACK_PAT }}
           no-cache: ${{ github.event.inputs.no_cache == 'true' }}
@@ -315,7 +304,6 @@ jobs:
           # dev pipeline: dev branches; main pipeline: stable branches
           if [ "${GITHUB_REF_NAME}" = "main" ]; then
             declare -A REPO_BRANCHS=(
-              ["lpb-stack/pi"]="lpb"
               ["lpb-stack/pi-subagents"]="lpb"
               ["lpb-stack/lemonade-pi-plugin"]="lpb"
               ["lpb-stack/config"]="main"
@@ -323,7 +311,6 @@ jobs:
             )
           else
             declare -A REPO_BRANCHS=(
-              ["lpb-stack/pi"]="lpb-dev"
               ["lpb-stack/pi-subagents"]="lpb-dev"
               ["lpb-stack/lemonade-pi-plugin"]="lpb-dev"
               ["lpb-stack/config"]="dev"
@@ -414,9 +401,8 @@ jobs:
           for r in lpb-memory pi-subagents lemonade-pi-plugin; do
             git clone --quiet "https://github.com/lpb-stack/$r.git" "ws/git/$r"
           done
-          git clone --quiet https://github.com/lpb-stack/pi.git ws/pi
           for d in ws/config ws/git/lpb-memory ws/git/pi-subagents \
-                   ws/git/lemonade-pi-plugin ws/pi; do
+                   ws/git/lemonade-pi-plugin; do
             git -C "$d" fetch --quiet --depth 1 origin tag "$VERSION"
             git -C "$d" checkout -q "$VERSION"
           done

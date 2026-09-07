@@ -51,7 +51,7 @@ see [lpb-devstack reference](lpb-devstack.md).
 
 | Command | Description |
 |---|---|
-| `lpb-config setup` | The **same wizard** as `lpb setup` on the host: config repo, lemonade provider (auth.json), default model (settings.json), lpb-memory config. Every step is validated live (HTTP probes); failures loop with the error visible. Re-run any time to correct a bad configuration — current values are pre-filled. `--reconfigure` forces a re-run |
+| `lpb-config setup` | The **same wizard** as `lpb setup` on the host: config repo, lemonade provider (auth.json), default model (settings.json), MCP servers (mcp.json), lpb-memory config. Every step is validated live (HTTP probes); failures loop with the error visible. Re-run any time to correct a bad configuration — current values are pre-filled. `--reconfigure` forces a re-run |
 | `lpb-config setup --non-interactive` | Same, no prompts — `LEMONADE_BASE_URL` / `LEMONADE_API_KEY` env + defaults. First failure aborts with a precise error and writes nothing. This is the `start.sh` fallback for boots where the host wizard did not run |
 | `lpb-config check` | Validate the installation (read-only checklist: config repo, settings, credentials, live server probe) — the in-container twin of `lpb doctor` |
 

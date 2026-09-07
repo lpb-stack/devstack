@@ -106,6 +106,17 @@ def _is_dirty(path: Path) -> bool:
     return bool(out.strip())
 
 
+def _dirty_files(path: Path) -> list[str]:
+    """Uncommitted change lines (porcelain), minus lockfile tool-noise.
+
+    Lockfile rewrites are discarded automatically by workspace sync, so
+    they are not reported as drift.
+    """
+    st, _, _ = git(path, "status", "--porcelain")
+    return [line for line in st.splitlines()
+            if line.strip() and line[3:] not in LOCKFILE_NAMES]
+
+
 # Dependency lockfiles a package manager rewrites during `npm install`.
 # pi's extension manager runs npm install inside the extension clones, and a
 # newer npm than the one that generated the committed lockfile rewrites it

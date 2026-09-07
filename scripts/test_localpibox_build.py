@@ -25,8 +25,7 @@ def _fake_runner(responses):
 
 def test_build_load_env_success(tmpdir):
     (tmpdir / "lpb.stack.env").write_text(
-        "LPB_PI_FORK=https://github.com/lpb-stack/pi.git\n"
-        "LPB_PI_REF=lpb\n"
+        "LPB_PI_VERSION=0.84.4\n"
         "LPB_CONFIG_FORK=https://github.com/lpb-stack/config.git\n"
         "LPB_CONFIG_REF=main\n"
         "LPB_IMAGE_CLI=ghcr.io/lpb-stack/devstack:cli\n"
@@ -34,10 +33,9 @@ def test_build_load_env_success(tmpdir):
         "LPB_NODE_VERSION=24\n"
         "LPB_VSCODIUM_VERSION=1.126.04524\n"
     )
-    (tmpdir / "lpb.conf.env").write_text("LPB_MAX_TOKENS_CONTEXT_RATIO=0.06\n")
+    (tmpdir / "lpb.conf.env").write_text("# no required conf vars (ratio retired)\n")
     env = build.load_build_env(tmpdir.path)
     assert env["LPB_IMAGE_CLI"] == "ghcr.io/lpb-stack/devstack:cli"
-    assert env["LPB_MAX_TOKENS_CONTEXT_RATIO"] == "0.06"
 
 
 def test_build_load_env_missing_file(tmpdir):
@@ -51,7 +49,7 @@ def test_build_load_env_missing_file(tmpdir):
 
 def test_build_load_env_missing_var(tmpdir):
     for name in ("lpb.stack.env", "lpb.conf.env"):
-        (tmpdir / name).write_text("LPB_MAX_TOKENS_CONTEXT_RATIO=0.06\n")
+        (tmpdir / name).write_text("# no required conf vars (ratio retired)\n")
     try:
         build.load_build_env(tmpdir.path)
         assert False, "should raise RuntimeError"
@@ -61,11 +59,11 @@ def test_build_load_env_missing_var(tmpdir):
 
 def test_build_load_env_expands_home(tmpdir):
     (tmpdir / "lpb.stack.env").write_text(
-        "LPB_IMAGE_CLI=c\nLPB_IMAGE_WEB=w\nLPB_PI_FORK=f\nLPB_PI_REF=r\n"
+        "LPB_IMAGE_CLI=c\nLPB_IMAGE_WEB=w\nLPB_PI_VERSION=v\n"
         "LPB_CONFIG_FORK=c\nLPB_CONFIG_REF=m\nLPB_NODE_VERSION=n\nLPB_VSCODIUM_VERSION=v\n"
     )
     (tmpdir / "lpb.conf.env").write_text(
-        "LPB_MAX_TOKENS_CONTEXT_RATIO=0.06\nLPB_STATE_DIR=${HOME}/.lpb-stack/state\n"
+        "LPB_STATE_DIR=${HOME}/.lpb-stack/state\n"
     )
     env = build.load_build_env(tmpdir.path)
     assert env["LPB_STATE_DIR"] == os.path.expanduser("~") + "/.lpb-stack/state"
@@ -73,20 +71,20 @@ def test_build_load_env_expands_home(tmpdir):
 
 def test_build_build_args_with_fake_git(tmpdir):
     env = {
-        "LPB_PI_FORK": "fork", "LPB_PI_REF": "ref",
+        "LPB_PI_VERSION": "0.84.4",
         "LPB_CONFIG_FORK": "cfg", "LPB_CONFIG_REF": "main",
         "LPB_NODE_VERSION": "24", "LPB_VSCODIUM_VERSION": "v",
-        "LPB_MAX_TOKENS_CONTEXT_RATIO": "0.06",
         "LPB_IMAGE_CLI": "cli", "LPB_IMAGE_WEB": "web",
     }
     (tmpdir / "VERSION").write_text("0.9.9-test\n")
     runner = _fake_runner({
-        "ls-remote": ("abc123HEAD...\trefs/heads/ref\n", 0),
+        "ls-remote": ("abc123HEAD...\trefs/tags/v0.84.4\n", 0),
         "rev-parse": ("beef123\n", 0),
     })
     now = datetime.datetime(2026, 8, 10, 12, 0, 0, tzinfo=datetime.timezone.utc)
     args = build.build_args(env, root=tmpdir.path, now=now, runner=runner)
     flat = " ".join(args)
+    assert "PI_VERSION=0.84.4" in flat
     assert "PI_HEAD_SHA=abc123HEAD..." in flat
     assert "IMAGE_REVISION=beef123" in flat
     assert "IMAGE_BUILT=2026-08-10T12:00:00Z" in flat
@@ -96,10 +94,9 @@ def test_build_build_args_with_fake_git(tmpdir):
 
 def test_build_build_args_git_fail(tmpdir):
     env = {
-        "LPB_PI_FORK": "fork", "LPB_PI_REF": "ref",
+        "LPB_PI_VERSION": "0.84.4",
         "LPB_CONFIG_FORK": "cfg", "LPB_CONFIG_REF": "main",
         "LPB_NODE_VERSION": "24", "LPB_VSCODIUM_VERSION": "v",
-        "LPB_MAX_TOKENS_CONTEXT_RATIO": "0.06",
         "LPB_IMAGE_CLI": "cli", "LPB_IMAGE_WEB": "web",
     }
     runner = _fake_runner({"ls-remote": ("", 128), "rev-parse": ("", 128)})

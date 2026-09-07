@@ -32,15 +32,22 @@ from localpibox.run import run_cmd, which  # noqa: E402
 REQUIRED_STACK_VARS = [
     "LPB_IMAGE_CLI",
     "LPB_IMAGE_WEB",
-    "LPB_PI_FORK",
-    "LPB_PI_REF",
+    "LPB_PI_VERSION",
     "LPB_CONFIG_FORK",
     "LPB_CONFIG_REF",
     "LPB_NODE_VERSION",
     "LPB_VSCODIUM_VERSION",
 ]
-REQUIRED_CONF_VARS = ["LPB_MAX_TOKENS_CONTEXT_RATIO"]
+# No required conf vars (LPB_MAX_TOKENS_CONTEXT_RATIO retired 2026-09-02 —
+# response ceilings are per-model in the lemonade-pi-plugin catalog now).
+REQUIRED_CONF_VARS = []
 ENV_FILES = ["lpb.stack.env", "lpb.conf.env"]
+
+# Mainstream pi repo — used only to resolve the source sha of the pinned
+# npm version for image metadata (PI_HEAD_SHA). De-forked 2026-08-31: the
+# image no longer builds pi from source (the lpb-stack/pi fork is retired);
+# a forked pi requires re-introducing a source build (docs/reference/forking.md).
+PI_UPSTREAM = "https://github.com/earendil-works/pi.git"
 
 
 def project_root() -> Path:
@@ -75,12 +82,12 @@ def load_build_env(
     return env
 
 
-def git_ls_remote(fork: str, ref: str, runner=None) -> str:
+def git_ls_remote(fork: str, ref: str, runner=None, ref_kind: str = "heads") -> str:
     """HEAD sha of *ref* on *fork* via ``git ls-remote``; ``unknown`` on failure."""
     if not which("git"):
         return "unknown"
     runner = runner or run_cmd
-    out, _err, code = runner(["git", "ls-remote", fork, f"refs/heads/{ref}"], timeout=30)
+    out, _err, code = runner(["git", "ls-remote", fork, f"refs/{ref_kind}/{ref}"], timeout=30)
     if code or not out.strip():
         return "unknown"
     return out.split()[0]
@@ -105,15 +112,15 @@ def build_args(
     now = now or datetime.datetime.now(datetime.timezone.utc)
     version_file = root / "VERSION"
     lpb_version = version_file.read_text().strip() if version_file.is_file() else "unknown"
+    pi_version = env["LPB_PI_VERSION"]
+    pi_head_sha = git_ls_remote(PI_UPSTREAM, f"v{pi_version}", runner=runner, ref_kind="tags")
     return [
-        "--build-arg", f"PI_FORK={env['LPB_PI_FORK']}",
-        "--build-arg", f"PI_REF={env['LPB_PI_REF']}",
-        "--build-arg", f"PI_HEAD_SHA={git_ls_remote(env['LPB_PI_FORK'], env['LPB_PI_REF'], runner=runner)}",
+        "--build-arg", f"PI_VERSION={pi_version}",
+        "--build-arg", f"PI_HEAD_SHA={pi_head_sha}",
         "--build-arg", f"CONFIG_FORK={env['LPB_CONFIG_FORK']}",
         "--build-arg", f"CONFIG_REF={env['LPB_CONFIG_REF']}",
         "--build-arg", f"NODE_VERSION={env['LPB_NODE_VERSION']}",
         "--build-arg", f"VSCODIUM_VERSION={env['LPB_VSCODIUM_VERSION']}",
-        "--build-arg", f"LPB_MAX_TOKENS_CONTEXT_RATIO={env['LPB_MAX_TOKENS_CONTEXT_RATIO']}",
         "--build-arg", f"LPB_VERSION={lpb_version}",
         "--build-arg", f"IMAGE_REVISION={git_head_short(root, runner=runner)}",
         "--build-arg", f"IMAGE_BUILT={now.strftime('%Y-%m-%dT%H:%M:%SZ')}",

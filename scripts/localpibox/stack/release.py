@@ -596,7 +596,22 @@ def cmd_release_promote(*, assume_yes: bool, dry_run: bool, rebase: bool,
             continue
         push_args = ["push", "origin", main_b]
         if label in rebased:
-            push_args = ["push", "--force-with-lease", "origin", main_b]
+            # Explicit lease pinned to the exact remote SHA this run
+            # fetched. Bare --force-with-lease (which derives the expected
+            # value from refs/remotes/origin/<stable>) rejects with
+            # "stale info" in this environment (observed on git 2.53
+            # against GitHub) even when the tracking ref matches the
+            # remote — an explicit full-SHA lease does not.
+            full, _err, code = git(path, "rev-parse", "--verify",
+                                   f"origin/{main_b}")
+            if code != 0 or not full.strip():
+                cons.error(f"  {label}: cannot resolve origin/{main_b} — "
+                           "skipping force-push")
+                failures.append(label)
+                continue
+            push_args = ["push",
+                         f"--force-with-lease={main_b}:{full.strip()}",
+                         "origin", main_b]
         cons.info(f"  pushing {gh}:{main_b} …")
         out, err, code = git_auth(path, *push_args, timeout=180)
         if code != 0:

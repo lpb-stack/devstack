@@ -33,7 +33,7 @@ VERSION or cross-repo state.
 ```
 Single source: devstack/VERSION
 Developer: lpb-devstack bump → commit → push (the release trigger)
-CI: VERSION changed in pushed commit → tests → build + publish → tag 5 repos
+CI: VERSION changed in pushed commit → tests → build + publish → tag 4 repos
 ```
 
 - **devstack/VERSION** — the only VERSION file in the stack (e.g. `0.0.N-lpb-dev`)
@@ -48,11 +48,12 @@ CI: VERSION changed in pushed commit → tests → build + publish → tag 5 rep
   (`--push` also pushes, triggering CI)
 - **CI never writes VERSION** — the `VERSION_CHECK` job gates build/tag on a
   VERSION change in the pushed commit; cron and manual dispatch always build
-- **Tags** — created by CI (or `lpb-devstack tag-repos`) on the **other 5
-  repos only** (devstack is tracked by its VERSION file, never tagged),
+- **Tags** — created by CI (or `lpb-devstack tag-repos`) on the **other 4
+  repos only** (devstack is tracked by its VERSION file, never tagged; the
+  retired pi fork is not tagged),
   pointing at the pipeline's branch HEAD
-- **`lpb.stack.env`** — `LPB_PI_REF` / `LPB_CONFIG_REF` are **branch names**
-  (`lpb-dev`/`lpb`, `dev`/`main`), never versions
+- **`lpb.stack.env`** — `LPB_PI_VERSION` is the mainstream pi **npm version**
+  (e.g. `0.84.4`); `LPB_CONFIG_REF` is a **branch name** (`dev`/`main`)
 - **Pipeline profiles** — `lpb.stack.dev.env` / `lpb.stack.main.env` override
   the refs per pipeline (`lpb --tag dev|main`)
 - **Docker images** — `ghcr.io/lpb-stack/devstack` tagged per pipeline (see CI/CD)
@@ -65,7 +66,7 @@ CI: VERSION changed in pushed commit → tests → build + publish → tag 5 rep
 | **devstack** | workspace (single source) | `dev` | `main` |
 | **config** | workspace (agent preset) | `dev` | `main` |
 | **lpb-memory** | workspace + extension | `dev` | `main` |
-| **pi** | workspace (CI clones to /opt/pi-src) | `lpb-dev` | `lpb` |
+| **pi** | reference clone (de-forked — image installs pi from npm at `LPB_PI_VERSION`) | — | — |
 | **pi-subagents** | extension | `lpb-dev` | `lpb` |
 | **lemonade-pi-plugin** | extension | `lpb-dev` | `lpb` |
 
@@ -79,7 +80,7 @@ the GitHub org and GHCR paths use `lpb-stack`.
 ```
 Workspace:
   /home/lpb/workspace/devstack            (real clone, single source)
-  /home/lpb/workspace/pi                  (real clone, lpb-dev/lpb)
+  /home/lpb/workspace/pi                  (reference clone of the retired fork)
   /home/lpb/workspace/pi-subagents        (symlink → agent git clone)
   /home/lpb/workspace/lemonade-pi-plugin  (symlink → agent git clone)
   /home/lpb/workspace/lpb-memory          (symlink → agent git clone)
@@ -93,17 +94,17 @@ Extension clones (pi loads these per settings.json pins):
 
 ⚠️ Extensions update at runtime via `pi update --extensions`.
    They are NOT baked into Docker images.
-   CI clones pi into /opt/pi-src during the Docker build; workspace/pi is
-   for local development only.
+   The image installs mainstream pi from the npm registry (LPB_PI_VERSION);
+   workspace/pi is a reference clone of the retired fork (tag pre-defork-0.0.71).
 ```
 
 ## Branch Strategy
 
 - **`dev`** (devstack, config, lpb-memory): primary development. Default on GitHub.
 - **`main`** (devstack, config, lpb-memory): stable release branch.
-- **`lpb-dev`** (pi, pi-subagents, lemonade-pi-plugin): active development from
+- **`lpb-dev`** (pi-subagents, lemonade-pi-plugin): active development from
   upstream + LPB patches. Default on GitHub.
-- **`lpb`** (pi, pi-subagents, lemonade-pi-plugin): stable branch — receives
+- **`lpb`** (pi-subagents, lemonade-pi-plugin): stable branch — receives
   clean merges from `lpb-dev` via the release procedure. Divergence from
   `lpb-dev` is normal during active development.
 
@@ -131,11 +132,13 @@ docs sync + review happens at release time via `docs-ready`.
 
 ```bash
 # 0. Flag docs as reviewed for the release (merge dev→docs, build site,
-#    review with `cd ~/.lpb-stack/docs-preview && mike serve`, confirm →
+#    review the local build with
+#    `cd ~/.lpb-stack/docs-preview && python3 -m http.server 8000 -d site` →
+#    http://localhost:8000, confirm →
 #    commits DOCS_READY=<stable-version> on the docs branch + pushes)
 lpb-devstack release docs-ready
 
-# 1. Readiness check (all 6 repos + docs verdict, non-destructive, fetches first)
+# 1. Readiness check (all 5 repos + docs verdict, non-destructive, fetches first)
 lpb-devstack release status
 
 # 2. Inspect the exact plan without changing anything
@@ -162,7 +165,7 @@ What promote does per repo:
 After promote, CI (main pipeline) finishes the release — the VERSION change
 on `main` is the trigger:
 1. Builds `:{v}-cli/web`, `:main-cli/web`, `:latest-cli/web`, `:{sha}-cli/web`
-2. Tags the 5 repos on their stable branches (`lpb`/`main`)
+2. Tags the 4 repos on their stable branches (`lpb`/`main`)
 
 Then align the runtime to the stable pipeline:
 ```bash
@@ -188,7 +191,7 @@ Docs readiness verdicts (`release status`, checked by `promote`):
 ```bash
 # Work happens on dev as usual — CI runs tests on every push (no build).
 # When ready to ship: first push/commit any pending work in the other
-# 5 repos — bump refuses (dev release gate) until they're all on their
+# 4 repos — bump refuses (dev release gate) until they're all on their
 # dev branch, pushed, and committed.
 lpb-devstack bump                # current VERSION patch+1 (+ commit)
 git push origin dev              # CI sees VERSION change → build + tag
@@ -242,8 +245,7 @@ lpb-devstack --tag main validate
 ```
 
 Both tools are thin CLIs over the shared `scripts/localpibox/stack/` library
-(`gitutil` / `repos` / `version` / `workspace` / `validate` / `release`;
-`localpibox._stack_lib` remains a compat shim).
+(`gitutil` / `repos` / `version` / `workspace` / `validate` / `release`).
 
 ## Settings.json Lifecycle
 
@@ -275,11 +277,15 @@ Same pattern — template in config repo, user config on host volume:
 ## Hooks (devstack only, `core.hooksPath=.githooks`)
 
 **pre-commit** — validates BEFORE commit (exit non-zero aborts):
-1. VERSION format (`0.x.y-lpb[-dev]`)
-2. `lpb.stack.env` `LPB_PI_REF` is a branch name (`lpb` or `lpb-dev`)
-3. settings.json extension pins match VERSION (warn-level)
-4. Working tree clean (except VERSION/env/hooks changes)
-5. `scripts/test_lpb.py` passes (skip with `SKIP_TESTS=1 --no-verify`)
+1. devstack's tracked changes are fully staged (unstaged edits would
+   silently miss the commit)
+2. `python3 scripts/lpb-devstack validate` — the full stack alignment
+   check (VERSION, `LPB_PI_VERSION`, extension pins, branch alignment,
+   pipeline consistency, config worktree clean + extension-repo WIP
+   report). Runs the WORKSPACE copy on purpose: the PATH `lpb-devstack`
+   is the image-baked one and stays stale until the next rebuild, so the
+   hook always validates with the current logic.
+3. `scripts/test_lpb.py` passes (skip with `SKIP_TESTS=1`)
 
 The full test suite in pre-commit is intentional — it guards against
 low-quality changes reaching the repo. `lpb-devstack validate-hooks` runs
@@ -312,7 +318,7 @@ Jobs:
    - manual with `publish_latest`: `:latest-cli/web`
    - cron: `:weekly-cli/web`
 4. **tag-repos** — after successful builds, only if VERSION changed: tags
-   the 5 repos on the pipeline's branches (dev: `lpb-dev`/`dev`, main:
+   the 4 repos on the pipeline's branches (dev: `lpb-dev`/`dev`, main:
    `lpb`/`main`) using `LPB_STACK_PAT`. Retries transient 5xx with backoff
    and **fails the run if any repo's tag fails** (a partially-tagged stack
    is a release bug — re-running the job is idempotent, 422 = already
@@ -331,17 +337,18 @@ Images: `ghcr.io/lpb-stack/devstack` in two flavours per tag — `…-cli`
 `:dev-*`/`:main-*`/`:latest-*`/`:sha-*` (pulling a bare tag fails with
 `manifest unknown`).
 
-CI does NOT use `workspace/pi` — it clones pi from `LPB_PI_FORK`
-(`lpb-stack/pi`) into `/opt/pi-src` during the Docker build.
+The image does NOT use `workspace/pi` — it installs mainstream pi from the
+npm registry at `LPB_PI_VERSION` (de-forked 2026-08-31; the fork's last state
+is tag `pre-defork-0.0.71` in `lpb-stack/pi`).
 
 ## lpb Launcher
 
 - `scripts/lpb` (wrapper) → `scripts/lpb.py` (engine, stdlib-only)
 - Shared helpers: `scripts/localpibox/` Python package
   (env/log/run/cli + `stack/` for stack operations)
-- `support/lpb-config` + `support/lpb-devstack` (thin CLIs over
-  `localpibox.stack`; symlinks in `scripts/`, installed to
-  `/opt/pi-support/` in the image, to `~/.local/bin` on the host)
+- `scripts/lpb-config` + `scripts/lpb-devstack` (thin CLIs over
+  `localpibox.stack`; installed to `/opt/pi-support/` in the image,
+  to `~/.local/bin` on the host)
 - `support/build.py` — local image builder (`build.py [cli|web] [--push]`);
   CI does the same inline, this is for local/fork builds
 - Installed via `scripts/install.sh` (fetches from the `main` branch —

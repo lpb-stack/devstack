@@ -1,118 +1,49 @@
 #!/bin/bash
 # pre-commit hook — Validate devstack state before commit
 #
-# Validates:
-#   1. VERSION file format (0.x.y-lpb[-dev])
-#   2. lpb.stack.env LPB_PI_REF matches VERSION
-#   3. settings.json pins match VERSION
-#   4. devstack repo is clean (except VERSION/env/hooks)
-#   5. lpb.py unit tests pass
+# Thin wrapper: stack-state checks (VERSION, LPB_PI_VERSION, extension pins,
+# workspace branch alignment, pipeline consistency) live in ONE place —
+# the workspace's own validate module, so the hook always runs the
+# CURRENT logic (the PATH lpb-devstack is the image-baked copy and stays
+# stale until the next rebuild):
+#   python3 scripts/lpb-devstack validate   (scripts/localpibox/stack/validate.py)
+# This hook adds only the lpb.py unit tests.
+#
+# Escape hatches:
+#   SKIP_TESTS=1 git commit ...   — skip unit tests (~4s)
+#   git commit --no-verify ...    — skip everything
 
-DEVSTACK_DIR="$(git rev-parse --show-toplevel 2>/dev/null)"
-[ -z "$DEVSTACK_DIR" ] && DEVSTACK_DIR="$PWD"
-
-ERRORS=0
-CURRENT_VERSION=$(cat "$DEVSTACK_DIR/VERSION" 2>/dev/null || echo "NOT FOUND")
-
-SETTINGS_JSON="/home/lpb/.pi/agent/settings.json"
-
-info()  { echo "  ✅ $*"; }
-warn()  { echo "  ⚠️  $*"; }
-error() { echo "  ❌ $*"; ERRORS=$((ERRORS + 1)); }
-
-# 1. Validate VERSION file format
-echo "=== Stack Version ==="
-if [ ! -f "$DEVSTACK_DIR/VERSION" ]; then
-    error "VERSION file not found"
-elif echo "$CURRENT_VERSION" | grep -qE '^0\.[0-9]+\.[0-9]+-lpb(-dev)?$'; then
-    info "VERSION=$CURRENT_VERSION (valid)"
-else
-    error "VERSION='$CURRENT_VERSION' does not match 0.x.y-lpb format"
-fi
-echo ""
-
-# 2. Validate lpb.stack.env LPB_PI_REF is a branch name (not version)
-echo "=== Environment Sync ==="
-if [ -f "$DEVSTACK_DIR/lpb.stack.env" ]; then
-    PI_REF=$(grep '^LPB_PI_REF=' "$DEVSTACK_DIR/lpb.stack.env" | cut -d= -f2)
-    # LPB_PI_REF should be a branch name (lpb, lpb-dev), not a version tag
-    if echo "$PI_REF" | grep -qE '^(lpb|lpb-dev)$'; then
-        info "LPB_PI_REF=$PI_REF (branch)"
-    else
-        error "lpb.stack.env: LPB_PI_REF=$PI_REF (should be branch name: lpb or lpb-dev)"
-    fi
-else
-    warn "lpb.stack.env not found"
-fi
-echo ""
-
-# 3. Validate settings.json pins
-echo "=== Extension Pins ==="
-if [ -f "$SETTINGS_JSON" ]; then
-    for repo in lemonade-pi-plugin lpb-memory pi-subagents; do
-        if python3 -c "
-import json, sys
-with open('$SETTINGS_JSON') as f:
-    d = json.load(f)
-pins = d.get('packages', [])
-for p in pins:
-    if isinstance(p, dict) and '$repo' in p.get('extension', ''):
-        ver = p.get('version', '')
-        if ver and ver != '$CURRENT_VERSION':
-            print(f'MISMATCH: {ver}')
-            sys.exit(1)
-        elif not ver:
-            print('NO-PIN')
-            sys.exit(1)
-sys.exit(0)
-" 2>/dev/null; then
-            info "$repo: pinned correctly"
-        else
-            warn "$repo: pin verification skipped (format may differ)"
-        fi
-    done
-else
-    warn "settings.json not found at $SETTINGS_JSON"
-fi
-echo ""
-
-# 4. Check repo cleanliness
-echo "=== Unstaged Changes ==="
-check_unstaged() {
-    local repo_path="$1"
-    local repo_name="$2"
-    [ -d "$repo_path" ] || return 0
-    local dirty
-    dirty=$(cd "$repo_path" && git diff --name-only 2>/dev/null | grep -vE '^$' | grep -vE 'VERSION|lpb\.stack\.env|lpb\.conf\.env|\.githooks/' | grep -c . || true)
-    [ "$dirty" -gt 0 ] && error "$repo_name: $dirty unstaged change(s)" || info "$repo_name: clean"
-}
-
-check_unstaged "$DEVSTACK_DIR" "devstack"
-echo ""
-
-# 5. Run lpb.py unit tests
-echo "=== Python Tests ==="
-if [ ! -f "$DEVSTACK_DIR/scripts/test_lpb.py" ]; then
-    warn "test_lpb.py not found — skipping"
-elif [ -n "$SKIP_TESTS" ]; then
-    info "(skipped via SKIP_TESTS)"
-else
-    cd "$DEVSTACK_DIR"
-    if python3 scripts/test_lpb.py 2>&1 | tail -3; then
-        info "all tests passed"
-    else
-        error "test_lpb.py FAILED"
-        echo "   Fix tests before committing, or use SKIP_TESTS=1 --no-verify to bypass"
-    fi
-fi
-echo ""
-
-# Result
-if [ $ERRORS -gt 0 ]; then
-    echo "❌ Pre-commit FAILED ($ERRORS error(s)) — commit aborted"
-    echo "   Fix issues above and try again, or use --no-verify to skip"
+# Devstack's own tree: tracked changes must be STAGED — unstaged edits
+# would silently be missing from the commit being made right now.
+# (Untracked files are fine: new work-in-progress.)
+echo "=== devstack staged ==="
+unstaged=$(git diff --name-only)
+if [ -n "$unstaged" ]; then
+    echo "❌ Unstaged changes in devstack (NOT included in this commit):"
+    echo "$unstaged" | sed 's/^/   /'
+    echo "   git add the files above (or commit them separately), or --no-verify"
     exit 1
-else
-    echo "✅ All checks passed"
-    exit 0
 fi
+echo ""
+
+echo "=== lpb-devstack validate (workspace copy) ==="
+if ! python3 scripts/lpb-devstack validate; then
+    echo ""
+    echo "❌ Pre-commit FAILED — validation did not pass"
+    echo "   Fix the issues above and retry, or use --no-verify to skip"
+    exit 1
+fi
+echo ""
+
+# lpb.py unit tests
+echo "=== Python Tests ==="
+if [ -n "$SKIP_TESTS" ]; then
+    echo "  (skipped via SKIP_TESTS)"
+elif ! python3 scripts/test_lpb.py 2>&1 | tail -3; then
+    echo ""
+    echo "❌ Pre-commit FAILED — test_lpb.py failed"
+    echo "   Fix tests before committing, or use SKIP_TESTS=1 to bypass"
+    exit 1
+fi
+echo ""
+echo "✅ Pre-commit passed"

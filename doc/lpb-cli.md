@@ -102,7 +102,7 @@ HTTP probe of the Lemonade server), not a one-shot first-boot flag:
 
 - **healthy** → silent; the stored URL/key are passed to the container.
 - **missing or broken + TTY** → the **setup wizard** runs (config repo →
-  server URL → API key → default model → lpb-memory config). Every step is
+  server URL → API key → default model → MCP servers → lpb-memory config). Every step is
   validated live (real HTTP probes) and failures loop back with the raw
   error visible; `a` continues anyway (flagged), `q` aborts (nothing is
   written, no container starts). The wizard writes `auth.json`,

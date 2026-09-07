@@ -18,7 +18,7 @@ has its own scope:
 |---|---|
 | [devstack](https://github.com/lpb-stack/devstack) | Container image (`Dockerfile`), `lpb` launcher (`scripts/`), entrypoints (`support/`), CI |
 | [config](https://github.com/lpb-stack/config) | Pi settings, MCP servers, custom skills, subagents presets |
-| [pi](https://github.com/lpb-stack/pi) | Qwen `reasoning_effort` + context-overflow patches (fork) |
+| [pi](https://github.com/earendil-works/pi) | Upstream of the coding agent core — installed from npm at `LPB_PI_VERSION`, not a stack repo since the 2026-08-31 de-fork; patches go upstream |
 | [lemonade-pi-plugin](https://github.com/lpb-stack/lemonade-pi-plugin) | Qwen thinking + vision support (fork) |
 | [pi-subagents](https://github.com/lpb-stack/pi-subagents) | Centralized subagent model registry (fork) |
 | [lpb-memory](https://github.com/lpb-stack/lpb-memory) | Persistent memory / session search extension |

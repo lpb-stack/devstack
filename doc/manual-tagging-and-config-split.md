@@ -1,5 +1,10 @@
 # Design: Manual Tagging & lpb-config Split
 
+> ⚠️ **Point-in-time design record** (2026-08-25). The design it describes is
+> implemented and current, but the command lists and details below are a
+> snapshot — for the up-to-date references see
+> [lpb-devstack](lpb-devstack.md) and [lpb-config](lpb-config.md).
+
 > **Status:** Implemented and running (since 2026-08-20)
 > **Last verified:** 2026-08-25 — tools deployed, CI active
 
@@ -34,7 +39,7 @@ lpb-config check           # Validate the installation (read-only checklist)
 **`lpb-devstack` commands:**
 ```bash
 lpb-devstack bump                    # Bump VERSION (patch/minor/major/set)
-lpb-devstack tag-repos               # Tag 5 repos with committed VERSION
+lpb-devstack tag-repos               # Tag 4 repos with committed VERSION
 lpb-devstack workspace status        # Branches + alignment
 lpb-devstack workspace sync          # Clone/symlink/align/pull
 lpb-devstack validate                # Full stack alignment check
@@ -75,7 +80,7 @@ Phase 5: status         — Always runs (depends on build* results)
   pushed tip commit — commits landed after the bump make the push look
   tests-only and the build/tag is skipped (re-bump on the new tip to recover).
 - **Devstack is tracked by VERSION, never tagged.** `tag-repos` covers the
-  other 5 repos only.
+  other 4 repos only.
 - **Stable releases are docs-gated.** `release promote` refuses until the
   `docs` branch carries `DOCS_READY=<stable-version>` (set by `release
 docs-ready`); the main pipeline re-verifies the flag before publishing.

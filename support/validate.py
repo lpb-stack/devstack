@@ -32,7 +32,8 @@ from localpibox.log import Console  # noqa: E402
 from localpibox.run import run_cmd, which  # noqa: E402
 
 EXT_BASE = Path("/home/lpb/.pi/agent/git")
-CHECK_REPOS = ("lpb-stack/lemonade-pi-plugin", "lpb-stack/lpb-memory")
+CHECK_REPOS = ("lpb-stack/lemonade-pi-plugin", "lpb-stack/lpb-memory",
+               "lpb-stack/pi-subagents")
 SQLITE_LIB_DIRS = ["/usr/lib/x86_64-linux-gnu"]
 
 
