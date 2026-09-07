@@ -1,0 +1,1653 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the LocalPibox development stack — versioned per stack tag">
+      
+      
+      
+        <link rel="canonical" href="https://lpb-stack.github.io/devstack/0.0.77-lpb/reference/lpb-cli/">
+      
+      
+        <link rel="prev" href="../../operations/subagent-spawning-pattern/">
+      
+      
+        <link rel="next" href="../lpb-config/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>lpb CLI - LocalPibox Stack</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#lpb-cli-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="LocalPibox Stack" class="md-header__button md-logo" aria-label="LocalPibox Stack" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            LocalPibox Stack
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              lpb CLI
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="teal"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="teal"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpb-stack/devstack" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpb-stack/devstack
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="LocalPibox Stack" class="md-nav__button md-logo" aria-label="LocalPibox Stack" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    LocalPibox Stack
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpb-stack/devstack" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpb-stack/devstack
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repo-map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repo map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/subagent-spawning-pattern/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subagent spawning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI & configuration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CLI & configuration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lpb CLI
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lpb CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pi-passthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pi passthrough
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vscodium-options-web-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VSCodium options (--web mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ssh-mode-ssh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SSH mode (--ssh)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#initial-setup-one-wizard-for-all-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Initial setup — one wizard for all modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#image-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image Selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Image Selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#selecting-a-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selecting a pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resolution-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resolution rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resolution-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resolution example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment Variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#self-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-Update
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lpb-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lpb-config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lpb-devstack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lpb-devstack
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env-vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-repo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config repo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../forking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Forking & repointing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stack internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Stack internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lpb-memory-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lpb-memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fork-improvements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fork improvements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../thinking-support/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thinking support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../thinking-benchmark/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thinking benchmark
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#installation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Installation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Commands">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#pi-passthrough" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Pi passthrough
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#vscodium-options-web-mode" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        VSCodium options (--web mode)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ssh-mode-ssh" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        SSH mode (--ssh)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#initial-setup-one-wizard-for-all-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Initial setup — one wizard for all modes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#image-selection" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image Selection
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Image Selection">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#selecting-a-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Selecting a pipeline
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resolution-rules" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resolution rules
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#resolution-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Resolution example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Environment Variables
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#self-update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Self-Update
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="lpb-cli-reference">lpb CLI Reference<a class="headerlink" href="#lpb-cli-reference" title="Permanent link">&para;</a></h1>
+<p><code>lpb</code> is the user-facing launcher for the LocalPibox devstack. It wraps
+<strong>podman</strong> (or docker) to manage the container lifecycle, resolve image
+tags, and self-update. It is stdlib-only Python — no dependencies to install.</p>
+<h2 id="installation">Installation<a class="headerlink" href="#installation" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>curl<span class="w"> </span>-fsSL<span class="w"> </span>https://raw.githubusercontent.com/lpb-stack/devstack/main/scripts/install.sh<span class="w"> </span><span class="p">|</span><span class="w"> </span>bash
+</code></pre></div>
+<p>Installs (no sudo required) into <code>~/.local/bin</code>:</p>
+<ul>
+<li><code>lpb</code> — bash wrapper</li>
+<li><code>lpb.py</code> — Python engine</li>
+<li><code>lpb-config</code>, <code>lpb-devstack</code></li>
+<li>the shared <code>localpibox</code> package (the setup wizard behind <code>lpb setup</code> /
+  <code>lpb doctor</code>) — installed to <code>~/.lpb-stack/devstack/localpibox/</code></li>
+</ul>
+<p>…and copies the stack config files (<code>lpb.stack.env</code>, <code>lpb.conf.env</code>,
+<code>VERSION</code>) to <code>~/.lpb-stack/devstack/</code>. Make sure <code>~/.local/bin</code> is on your
+<code>PATH</code>.</p>
+<h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lpb [/path/to/project]</code></td>
+<td>Start a <strong>Pi CLI session</strong> (foreground). No path → last project, or <code>~</code> if none yet</td>
+</tr>
+<tr>
+<td><code>lpb --web [/path]</code></td>
+<td>Start <strong>VSCodium</strong> (background), prints the connection URL</td>
+</tr>
+<tr>
+<td><code>lpb --shell [/path]</code></td>
+<td>Interactive bash shell inside the container</td>
+</tr>
+<tr>
+<td><code>lpb --ssh [pubkey\|path] [project]</code></td>
+<td>Start an sshd server in the container for remote login (key auto-detected from <code>~/.ssh</code> when omitted)</td>
+</tr>
+<tr>
+<td><code>lpb --ssh --ssh-password [pw]</code></td>
+<td>SSH password login (random if omitted, shown once; can combine with key auth)</td>
+</tr>
+<tr>
+<td><code>lpb --stop</code></td>
+<td>Stop the container</td>
+</tr>
+<tr>
+<td><code>lpb --remove</code></td>
+<td>Stop + remove container + state dirs</td>
+</tr>
+<tr>
+<td><code>lpb --logs</code></td>
+<td>Stream container logs</td>
+</tr>
+<tr>
+<td><code>lpb --update</code></td>
+<td>Self-update the launcher + stack tools + pull the latest image(s)</td>
+</tr>
+<tr>
+<td><code>lpb setup</code></td>
+<td>Run the <strong>initial setup wizard</strong> (server, key, model, memory) — any time, all modes</td>
+</tr>
+<tr>
+<td><code>lpb doctor</code></td>
+<td>Validate the installation (read-only checklist)</td>
+</tr>
+<tr>
+<td><code>lpb --config</code></td>
+<td>Show config file location + model provider status</td>
+</tr>
+<tr>
+<td><code>lpb --version</code></td>
+<td>Show installed launcher version</td>
+</tr>
+<tr>
+<td><code>lpb --help</code></td>
+<td>Full usage</td>
+</tr>
+</tbody>
+</table>
+<p>Positional aliases (no <code>--</code> needed): <code>lpb logs</code>, <code>lpb stop</code>, <code>lpb update</code>,
+<code>lpb remove</code>, <code>lpb config</code>, <code>lpb setup</code>, <code>lpb doctor</code>, <code>lpb version</code>, <code>lpb help</code>.</p>
+<h3 id="pi-passthrough">Pi passthrough<a class="headerlink" href="#pi-passthrough" title="Permanent link">&para;</a></h3>
+<p>Everything after <code>--</code> goes to Pi:</p>
+<div class="highlight"><pre><span></span><code>lpb<span class="w"> </span>/myproject<span class="w"> </span>--<span class="w"> </span>-p<span class="w"> </span><span class="s2">&quot;summarize this repo&quot;</span><span class="w">   </span><span class="c1"># non-interactive run</span>
+lpb<span class="w"> </span>/myproject<span class="w"> </span>--<span class="w"> </span>--continue<span class="w">                 </span><span class="c1"># continue the last session</span>
+lpb<span class="w"> </span>/myproject<span class="w"> </span>--<span class="w"> </span>--thinking<span class="w"> </span>high<span class="w">            </span><span class="c1"># pass any pi flag</span>
+</code></pre></div>
+<h3 id="vscodium-options-web-mode">VSCodium options (<code>--web</code> mode)<a class="headerlink" href="#vscodium-options-web-mode" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>--host &lt;HOST&gt;          listen host (default: from .env or localhost)
+--port &lt;PORT&gt;          port (default: from .env or 3000)
+--token &lt;TOKEN&gt;        connection token (default: auto-generated)
+--new-token            generate a fresh token
+--without-token        hide the token in the printed URL
+</code></pre></div>
+<h3 id="ssh-mode-ssh">SSH mode (<code>--ssh</code>)<a class="headerlink" href="#ssh-mode-ssh" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Key auto-detection</strong>: <code>lpb --ssh</code> with no argument scans the <em>host</em> user
+  profile (<code>~/.ssh/*.pub</code>). One key → used (confirmed on a TTY); several →
+  numbered menu; none → error with a hint. Non-interactive: one key is used
+  automatically, several → explicit selection required.</li>
+<li><strong>Explicit key still wins</strong>: <code>lpb --ssh &lt;pubkey|path&gt;</code> — a literal inline
+  key or a path to a <code>.pub</code> file (tilde expanded). A value that is an
+  existing <em>directory</em> is treated as the project dir (the key menu still
+  appears); anything else is an error — a nonexistent path is never silently
+  accepted as a key.</li>
+<li><strong>First-run wait</strong>: on the first boot the container bootstraps (config-repo
+  clone, volume chown, provider setup) <em>before</em> sshd starts, which can take a
+  few minutes. <code>lpb</code> detects first run (no <code>.initialized</code> in the state dir),
+  waits up to 5 minutes with progress notes (30 s on warm starts), and only
+  then reports a failure — with the last container log lines and a
+  first-run-aware hint (<code>lpb --logs</code> shows the bootstrap finishing; sshd
+  starts automatically once it completes).</li>
+<li><strong>Password login</strong>: <code>lpb --ssh --ssh-password</code> (random, printed once) or
+  <code>lpb --ssh --ssh-password &lt;pw&gt;</code> (user-chosen). The container user's password
+  is set at start (<code>chpasswd</code>) and <code>PasswordAuthentication</code> is enabled in the
+  generated <code>sshd_config</code>. Key auth remains the default — password auth is
+  opt-in (the container runs <code>network=host</code>, so a password is reachable from
+  the LAN).</li>
+<li><strong>authorized_keys is append+dedup</strong>: keys added manually (or in a previous
+  session) survive container recreation.</li>
+<li><strong><code>LPB_SSH_PORT</code></strong> (default <code>2222</code>): forwarded to the container; the
+  connect line (<code>ssh -p &lt;port&gt; lpb@&lt;host&gt;</code>) is printed when the server starts.</li>
+</ul>
+<h3 id="initial-setup-one-wizard-for-all-modes">Initial setup — one wizard for all modes<a class="headerlink" href="#initial-setup-one-wizard-for-all-modes" title="Permanent link">&para;</a></h3>
+<p>Before the <strong>first container start — in every mode (cli, shell, ssh, web)</strong> —
+<code>lpb</code> validates the model-provider configuration. The provider state is
+checked live (stored credentials in <code>LPB_STATE_DIR/agent/auth.json</code> + a real
+HTTP probe of the Lemonade server), not a one-shot first-boot flag:</p>
+<ul>
+<li><strong>healthy</strong> → silent; the stored URL/key are passed to the container.</li>
+<li><strong>missing or broken + TTY</strong> → the <strong>setup wizard</strong> runs (config repo →
+  server URL → API key → default model → MCP servers → lpb-memory config). Every step is
+  validated live (real HTTP probes) and failures loop back with the raw
+  error visible; <code>a</code> continues anyway (flagged), <code>q</code> aborts (nothing is
+  written, no container starts). The wizard writes <code>auth.json</code>,
+  <code>settings.json</code> and <code>lpb-memory-config.json</code> directly into the state dir,
+  so the configuration is <strong>persisted before the first use</strong>.</li>
+<li><strong>missing or broken + non-TTY</strong> (or <code>lpb --non-interactive</code>) → env
+  passthrough (<code>LPB_LEMONADE_BASE_URL</code> / <code>LPB_LEMONADE_API_KEY</code> / <code>lpb.conf.env</code>)
+  with a visible note; the container runs a non-interactive fallback.</li>
+</ul>
+<p>Because validation is live, a server that moves or a key that changes is
+detected on the next start and re-offers the wizard — configuration is never
+silently stale. The launch summary always ends with a model status line
+(✓ provider / ⚠ fix with <code>lpb setup</code>).</p>
+<p>On-demand commands (any mode, any time):</p>
+<ul>
+<li><code>lpb setup</code> — run the wizard interactively (the way to correct a bad
+  configuration; current values are pre-filled).</li>
+<li><code>lpb doctor</code> — read-only checklist: config repo, rendered config, provider
+  credentials, live server probe, container runtime, image.</li>
+</ul>
+<p>Inside the container the same wizard is available as <code>lpb-config setup</code>
+(and <code>lpb-config check</code> for the checklist); <code>start.sh</code> runs it
+non-interactively as a fallback on boots where the host wizard did not run,
+and a missing provider is reported in the container logs on <strong>every boot</strong>
+until fixed — not swallowed. Reconfigure any time with
+<code>lpb-config setup --reconfigure</code>.</p>
+<h2 id="image-selection">Image Selection<a class="headerlink" href="#image-selection" title="Permanent link">&para;</a></h2>
+<p>Two image flavours are published to <code>ghcr.io/lpb-stack/devstack</code>:</p>
+<ul>
+<li><strong><code>…-cli</code></strong> — dev environment + Pi CLI</li>
+<li><strong><code>…-web</code></strong> — extends <code>-cli</code> with the VSCodium server</li>
+</ul>
+<h3 id="selecting-a-pipeline">Selecting a pipeline<a class="headerlink" href="#selecting-a-pipeline" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Selector</th>
+<th>Image</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--tag dev</code> (or <code>--dev</code>)</td>
+<td>latest dev-pipeline version (<code>0.0.x-lpb-dev-…</code>)</td>
+</tr>
+<tr>
+<td><code>--tag main</code> (or <code>--main</code>)</td>
+<td>latest stable version (<code>0.0.x-lpb-…</code>)</td>
+</tr>
+<tr>
+<td><code>--tag latest</code></td>
+<td>same as <code>main</code></td>
+</tr>
+<tr>
+<td><code>--tag 0.0.N-lpb-dev</code></td>
+<td>pin to an exact version</td>
+</tr>
+<tr>
+<td><code>LPB_IMAGE_TAG=…</code></td>
+<td>persistent env-var override</td>
+</tr>
+<tr>
+<td><em>(no tag)</em></td>
+<td>last-used version (pinned in <code>~/.lpb-stack/devstack/last-version</code>), else the stable pipeline</td>
+</tr>
+</tbody>
+</table>
+<h3 id="resolution-rules">Resolution rules<a class="headerlink" href="#resolution-rules" title="Permanent link">&para;</a></h3>
+<ol>
+<li>With a versioned tag, <code>lpb</code> pulls <code>ghcr.io/lpb-stack/devstack:&lt;tag&gt;-cli</code>
+   and <code>:&lt;tag&gt;-web</code> (only what the selected mode needs).</li>
+<li>For <code>--tag dev|main</code>, it reads the remote <code>VERSION</code> file of that branch
+   to get the exact version; offline, it falls back to the cached
+   last-version, then to the floating tags <code>:dev-*</code> / <code>:main-*</code> /
+   <code>:latest-*</code>.</li>
+<li>The <strong>bare <code>:cli</code>/<code>:web</code>/<code>:latest</code> tags are never used</strong> — CI does not
+   publish them, so pulling them always fails with <code>manifest unknown</code>.</li>
+</ol>
+<p>Tags CI publishes: <code>:{v}-cli/web</code>, <code>:dev-cli/web</code>, <code>:main-cli/web</code>,
+<code>:latest-cli/web</code>, <code>:weekly-cli/web</code>, <code>:{sha}-cli/web</code>.</p>
+<h3 id="resolution-example">Resolution example<a class="headerlink" href="#resolution-example" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>User runs:  lpb --main /project
+
+1. resolve_web_image(&quot;main&quot;) → reads remote main-branch VERSION (0.0.N-lpb)
+2. image = ghcr.io/lpb-stack/devstack:0.0.N-lpb-web
+3. podman pull (if not cached)
+4. podman run --name lpb-stack --network host \
+     -v /project:/home/lpb/workspace/project \
+     -v ~/.lpb-stack/state:/home/lpb/.pi \
+     -v ~/.lpb-stack/agent-browser:/home/lpb/.agent-browser \
+     ghcr.io/lpb-stack/devstack:0.0.N-lpb-web
+5. pins 0.0.N-lpb in ~/.lpb-stack/devstack/last-version
+</code></pre></div>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<p><code>lpb</code> reads its own config from <code>~/.lpb-stack/devstack/</code>:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>config</code></td>
+<td>User overrides (shell-syntax env assignments)</td>
+</tr>
+<tr>
+<td><code>VERSION</code></td>
+<td>Launcher/stack version (kept in sync by <code>lpb --update</code>)</td>
+</tr>
+<tr>
+<td><code>last-version</code></td>
+<td>Last used stack version (pin for tag-less runs)</td>
+</tr>
+<tr>
+<td><code>last-project</code></td>
+<td>Last project dir (for bare <code>lpb</code>)</td>
+</tr>
+<tr>
+<td><code>token</code></td>
+<td>Persisted VSCodium token</td>
+</tr>
+<tr>
+<td><code>projects/</code></td>
+<td>Per-project state</td>
+</tr>
+</tbody>
+</table>
+<p>Environment priority (highest → lowest):</p>
+<ol>
+<li>Shell environment (<code>export LPB_…</code>)</li>
+<li><code>~/.lpb-stack/devstack/config</code></li>
+<li><code>lpb.stack.env</code> / pipeline profile (<code>lpb.stack.dev.env</code> / <code>lpb.stack.main.env</code>)</li>
+<li><code>lpb.conf.env</code> (baked into the image)</li>
+<li>Hardcoded fallbacks</li>
+</ol>
+<h2 id="environment-variables">Environment Variables<a class="headerlink" href="#environment-variables" title="Permanent link">&para;</a></h2>
+<p>Launcher-level variables (see <a href="../env-vars/">Environment variables</a> for the
+full reference including the <code>LPB_</code> bridge and in-container vars):</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>LPB_IMAGE_TAG</code></td>
+<td>—</td>
+<td>Persistent pipeline/version override (<code>dev</code>, <code>main</code>, <code>latest</code>, or a version)</td>
+</tr>
+<tr>
+<td><code>LPB_STATE_DIR</code></td>
+<td><code>~/.lpb-stack/state</code></td>
+<td>Host dir mounted to <code>/home/lpb/.pi</code></td>
+</tr>
+<tr>
+<td><code>LPB_BROWSER_DIR</code></td>
+<td><code>~/.lpb-stack/agent-browser</code></td>
+<td>Host dir for browser sessions</td>
+</tr>
+<tr>
+<td><code>LPB_CONTAINER_NAME</code></td>
+<td><code>lpb-stack</code></td>
+<td>Container name</td>
+</tr>
+<tr>
+<td><code>LPB_IMAGE_CLI</code> / <code>LPB_IMAGE_WEB</code></td>
+<td>lpb-stack images</td>
+<td>Last-resort fallback image names (forks)</td>
+</tr>
+<tr>
+<td><code>GHCR_USERNAME</code></td>
+<td><code>lpb-stack</code></td>
+<td>Registry user for pulls</td>
+</tr>
+</tbody>
+</table>
+<h2 id="self-update">Self-Update<a class="headerlink" href="#self-update" title="Permanent link">&para;</a></h2>
+<p><code>lpb --update</code> re-fetches <code>lpb</code> + <code>lpb.py</code> from GitHub and pulls the latest
+image(s) for the selected pipeline. The source branch follows the tag:
+<code>*-dev</code> tags pull from the <code>dev</code> branch, everything else from <code>main</code> — so a
+launcher installed from <code>main</code> can track <code>dev</code> simply by choosing the tag.
+(Install from <code>main</code> via <code>install.sh</code> — that's why <code>main</code> must stay a
+working stable tree.)</p>
+<h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>lpb<span class="w"> </span>~/projects/myapp<span class="w">                        </span><span class="c1"># Pi CLI (stable pipeline, or last pin; --dev for dev)</span>
+lpb<span class="w"> </span>--main<span class="w"> </span>~/projects/myapp<span class="w">                 </span><span class="c1"># stable pipeline</span>
+lpb<span class="w"> </span>--tag<span class="w"> </span><span class="m">0</span>.0.N-lpb-dev<span class="w"> </span>~/projects/myapp<span class="w">   </span><span class="c1"># pin to an exact version</span>
+lpb<span class="w"> </span>--web<span class="w"> </span>--port<span class="w"> </span><span class="m">8080</span><span class="w"> </span>~/projects/myapp<span class="w">      </span><span class="c1"># VSCodium on port 8080</span>
+lpb<span class="w"> </span>--shell<span class="w"> </span>~/projects/myapp<span class="w">                </span><span class="c1"># bash inside the container</span>
+lpb<span class="w"> </span>~/projects/myapp<span class="w"> </span>--<span class="w"> </span>-p<span class="w"> </span><span class="s2">&quot;fix the bug&quot;</span><span class="w">    </span><span class="c1"># one-shot pi run</span>
+lpb<span class="w"> </span>update<span class="w">                                  </span><span class="c1"># self-update + pull images</span>
+lpb<span class="w"> </span>logs<span class="w">                                    </span><span class="c1"># stream logs</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>

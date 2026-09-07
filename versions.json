@@ -1,10 +1,15 @@
 [
   {
-    "version": "0.0.71-lpb",
-    "title": "0.0.71-lpb",
+    "version": "0.0.77-lpb",
+    "title": "0.0.77-lpb",
     "aliases": [
       "latest"
     ]
+  },
+  {
+    "version": "0.0.71-lpb",
+    "title": "0.0.71-lpb",
+    "aliases": []
   },
   {
     "version": "0.0.62-lpb",
