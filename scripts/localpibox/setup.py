@@ -66,7 +66,10 @@ _MEMORY_DEFAULTS: dict = {
     "memoryCharLimit": 3000,
     "userCharLimit": 3000,
     "failureInjectionMaxEntries": 3,
-    "llmThinkingOverride": "low",
+    # Fallback only — the template/config value wins (setdefault below).
+    # Subprocess LLM tasks (review/consolidation/flush) are mechanical;
+    # thinking slows them down and risks long NPU occupation.
+    "llmThinkingOverride": "off",
 }
 
 _ABORT_TOKENS = ("q", "quit", "abort")
@@ -440,7 +443,7 @@ def configure_memory(agent_dir: str | Path, cons: Console, *,
     if not interactive:
         if default_model:
             base["llmModelOverride"] = default_model
-            base["llmThinkingOverride"] = "low"
+        base.setdefault("llmThinkingOverride", "off")  # config/template wins
         try:
             agent_dir.mkdir(parents=True, exist_ok=True)
             out.write_text(json.dumps(base, indent=2) + "\n")
@@ -474,9 +477,11 @@ def configure_memory(agent_dir: str | Path, cons: Console, *,
         model = model or default_model
         if model:
             base["llmModelOverride"] = model
-            base["llmThinkingOverride"] = "low"
         else:
             base.pop("llmModelOverride", None)
+        # Thinking level is a personal preference — config/template wins;
+        # "off" is only the fallback (works with any review model).
+        base.setdefault("llmThinkingOverride", "off")
 
         cons.info("  Context limits (press Enter for defaults):")
         base["memoryCharLimit"] = _ask_int(cons, "Memory entries", int(base.get("memoryCharLimit", 3000)))
