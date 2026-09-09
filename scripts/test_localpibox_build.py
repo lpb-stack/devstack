@@ -16,8 +16,14 @@ def _fake_runner(responses):
     """Return a run_cmd-style fn that maps git subcommand -> canned output."""
     def runner(args, timeout=120, cwd=None):
         if args and args[0] == "git":
-            sub = args[1]
-            out, code = responses.get(sub, ("", 0))
+            # responses may map the full ref spec (e.g. "tags/v0.85.1") or just
+            # the subcommand; try both so callers can pin an exact tag.
+            key = None
+            for cand in (" ".join(args[1:]), args[1]):
+                if cand in responses:
+                    key = cand
+                    break
+            out, code = responses.get(key, ("", 0))
             return out, "", code
         return "", "unexpected cmd", 1
     return runner
@@ -25,7 +31,7 @@ def _fake_runner(responses):
 
 def test_build_load_env_success(tmpdir):
     (tmpdir / "lpb.stack.env").write_text(
-        "LPB_PI_VERSION=0.84.4\n"
+        "LPB_PI_VERSION=0.85.1\n"
         "LPB_CONFIG_FORK=https://github.com/lpb-stack/config.git\n"
         "LPB_CONFIG_REF=main\n"
         "LPB_IMAGE_CLI=ghcr.io/lpb-stack/devstack:cli\n"
@@ -70,21 +76,23 @@ def test_build_load_env_expands_home(tmpdir):
 
 
 def test_build_build_args_with_fake_git(tmpdir):
+    pi_ver = "0.85.1"
     env = {
-        "LPB_PI_VERSION": "0.84.4",
+        "LPB_PI_VERSION": pi_ver,
         "LPB_CONFIG_FORK": "cfg", "LPB_CONFIG_REF": "main",
         "LPB_NODE_VERSION": "24", "LPB_VSCODIUM_VERSION": "v",
         "LPB_IMAGE_CLI": "cli", "LPB_IMAGE_WEB": "web",
     }
     (tmpdir / "VERSION").write_text("0.9.9-test\n")
     runner = _fake_runner({
-        "ls-remote": ("abc123HEAD...\trefs/tags/v0.84.4\n", 0),
+        f"ls-remote https://github.com/earendil-works/pi.git refs/tags/v{pi_ver}": (
+            "abc123HEAD...\trefs/tags/v" + pi_ver + "\n", 0),
         "rev-parse": ("beef123\n", 0),
     })
     now = datetime.datetime(2026, 8, 10, 12, 0, 0, tzinfo=datetime.timezone.utc)
     args = build.build_args(env, root=tmpdir.path, now=now, runner=runner)
     flat = " ".join(args)
-    assert "PI_VERSION=0.84.4" in flat
+    assert f"PI_VERSION={pi_ver}" in flat
     assert "PI_HEAD_SHA=abc123HEAD..." in flat
     assert "IMAGE_REVISION=beef123" in flat
     assert "IMAGE_BUILT=2026-08-10T12:00:00Z" in flat
@@ -94,7 +102,7 @@ def test_build_build_args_with_fake_git(tmpdir):
 
 def test_build_build_args_git_fail(tmpdir):
     env = {
-        "LPB_PI_VERSION": "0.84.4",
+        "LPB_PI_VERSION": "0.85.1",
         "LPB_CONFIG_FORK": "cfg", "LPB_CONFIG_REF": "main",
         "LPB_NODE_VERSION": "24", "LPB_VSCODIUM_VERSION": "v",
         "LPB_IMAGE_CLI": "cli", "LPB_IMAGE_WEB": "web",
