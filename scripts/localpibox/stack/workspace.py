@@ -21,6 +21,7 @@ from .repos import (
     CONFIG_REPO,
     DEFAULT_AGENT_DIR,
     LPB_EXTENSION_REPOS,
+    UPSTREAM_REMOTES,
     WORKSPACE_REPOS,
     WORKSPACE_ROOT,
     _repo_remote,
@@ -98,6 +99,36 @@ def _ensure_branch_tracked(repo_path: Path, branch: str) -> bool:
     if git(repo_path, "rev-parse", "--verify", f"refs/remotes/origin/{branch}")[2] == 0:
         git(repo_path, "branch", "--set-upstream-to", f"origin/{branch}", branch)
     return True
+
+
+def _ensure_upstream_remote(name: str, path: Path, cons: Console) -> None:
+    """Ensure a forked repo tracks its upstream project (remote 'upstream').
+
+    Applies to repos in UPSTREAM_REMOTES (the others have no upstream and
+    are no-ops). Adds the remote when missing, repairs it when the URL
+    drifted, then fetches so upstream refs/tags are current. Failures are
+    non-fatal — upstream visibility is a convenience, not pipeline
+    alignment.
+    """
+    url = UPSTREAM_REMOTES.get(name)
+    if not url:
+        return
+    cur, _, code = git(path, "remote", "get-url", "upstream")
+    if code != 0:
+        out, err, code = git(path, "remote", "add", "upstream", url)
+        if code != 0:
+            cons.warn(f"  {name}: could not add upstream remote ({err.strip()[:80]})")
+            return
+        cons.info(f"  {name}: upstream remote added ({url})")
+    elif cur.strip() != url:
+        out, err, code = git(path, "remote", "set-url", "upstream", url)
+        if code != 0:
+            cons.warn(f"  {name}: could not set upstream URL ({err.strip()[:80]})")
+            return
+        cons.info(f"  {name}: upstream remote {cur.strip()} → {url}")
+    out, err, code = git_auth(path, "fetch", "--prune", "upstream", timeout=180)
+    if code != 0:
+        cons.warn(f"  {name}: upstream fetch failed ({(err or out).strip()[:80]})")
 
 
 def _is_dirty(path: Path) -> bool:
@@ -367,6 +398,7 @@ def cmd_workspace_sync(pipeline: str, cons: Console) -> int:
                 continue
             _ensure_counterpart_branch(
                 name, ext_path, pipeline, dev_branch, main_branch, cons)
+            _ensure_upstream_remote(name, ext_path, cons)
             continue
 
         # Real repos live in the workspace root
@@ -382,6 +414,7 @@ def cmd_workspace_sync(pipeline: str, cons: Console) -> int:
         else:
             _ensure_counterpart_branch(
                 name, path, pipeline, dev_branch, main_branch, cons)
+            _ensure_upstream_remote(name, path, cons)
 
     # Config repo (the agent dir itself)
     if not _sync_config(pipeline, cons):

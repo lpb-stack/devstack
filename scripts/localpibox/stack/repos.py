@@ -59,6 +59,15 @@ WORKSPACE_REPOS = [
 # (name, dev_branch, main_branch)
 CONFIG_REPO = ("config", "dev", "main")
 
+# Stack repos that fork an upstream project, mapped to its canonical git URL.
+# `lpb-devstack workspace sync` ensures an `upstream` remote exists for these
+# (added on missing, repaired on drift) and fetches it, so upstream updates
+# are visible without manual remote setup.
+UPSTREAM_REMOTES = {
+    "pi-subagents": "https://github.com/tintinweb/pi-subagents.git",
+    "lemonade-pi-plugin": "https://github.com/lemonade-sdk/lemonade-pi-plugin.git",
+}
+
 
 def stack_repos() -> list[tuple[str, str, str]]:
     """All 6 stack repos: (name, dev_branch, main_branch) — single source of truth."""
