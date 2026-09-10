@@ -13,6 +13,13 @@
 #   SKIP_TESTS=1 git commit ...   — skip unit tests (~4s)
 #   git commit --no-verify ...    — skip everything
 
+# In a linked worktree GIT_DIR is an ABSOLUTE path into the main repo's
+# .git/worktrees/<name> — it would leak into every `git -C` subprocess the
+# validate runs and poison the workspace checks (all repos would report
+# the worktree's HEAD). Re-derive from CWD instead. GIT_INDEX_FILE stays:
+# the staged-check below needs the commit's temporary index.
+unset GIT_DIR GIT_WORK_TREE
+
 # Devstack's own tree: tracked changes must be STAGED — unstaged edits
 # would silently be missing from the commit being made right now.
 # (Untracked files are fine: new work-in-progress.)
