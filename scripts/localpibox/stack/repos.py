@@ -83,6 +83,14 @@ TAG_REPOS = [
 # Pi extension repos (settings.json pin targets).
 LPB_EXTENSION_REPOS = [n for (n, _sym, is_ext, _d, _m) in WORKSPACE_REPOS if is_ext]
 
+# Extensions installed from an upstream npm package instead of the fork
+# clone (fork retired). Pin versions follow upstream releases, NOT the
+# stack VERSION — pin sync leaves them alone and validate treats them as
+# a presence-only check.
+NPM_EXTENSION_PACKAGES = {
+    "pi-subagents": "@tintinweb/pi-subagents",
+}
+
 
 def repo_path(name: str) -> Path:
     """Local path where stack repo *name* lives (workspace root or agent dir)."""

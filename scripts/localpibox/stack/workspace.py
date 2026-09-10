@@ -21,6 +21,7 @@ from .repos import (
     CONFIG_REPO,
     DEFAULT_AGENT_DIR,
     LPB_EXTENSION_REPOS,
+    NPM_EXTENSION_PACKAGES,
     UPSTREAM_REMOTES,
     WORKSPACE_REPOS,
     WORKSPACE_ROOT,
@@ -457,7 +458,13 @@ def _get_pinned_versions(settings: dict) -> dict[str, str]:
     for pkg in settings.get("packages", []):
         if not isinstance(pkg, str):
             continue
+        for name, npm_pkg in NPM_EXTENSION_PACKAGES.items():
+            marker = f"npm:{npm_pkg}@"
+            if marker in pkg:
+                pins[name] = pkg.split("@")[-1]
         for name in LPB_EXTENSION_REPOS:
+            if name in NPM_EXTENSION_PACKAGES:
+                continue
             marker = f"lpb-stack/{name}@"
             if marker in pkg:
                 pins[name] = pkg.split("@")[-1]
@@ -469,6 +476,8 @@ def _update_pinned_versions(settings: dict, target_version: str) -> list[tuple[s
     packages = settings.get("packages", [])
     changes: list[tuple[str, str, str]] = []
     for name in LPB_EXTENSION_REPOS:
+        if name in NPM_EXTENSION_PACKAGES:
+            continue  # upstream npm pin — not managed by the stack VERSION
         marker = f"git:github.com/lpb-stack/{name}@"
         for i, pkg in enumerate(packages):
             if isinstance(pkg, str) and pkg.startswith(marker):
@@ -526,6 +535,11 @@ def cmd_workspace_sync_pins(pipeline: str, cons: Console) -> int:
     # Check mismatches
     mismatches = []
     for name in LPB_EXTENSION_REPOS:
+        if name in NPM_EXTENSION_PACKAGES:
+            cur = current_pins.get(name, "(unpinned)")
+            cons.info(f"  {name}: npm:{NPM_EXTENSION_PACKAGES[name]}@{cur} "
+                      f"(upstream pin — not managed by the stack VERSION)")
+            continue
         cur = current_pins.get(name, "(unpinned)")
         if cur != target_version:
             mismatches.append((name, cur, target_version))

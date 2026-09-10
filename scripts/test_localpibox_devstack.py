@@ -186,7 +186,8 @@ def test_devstack_bump_syncs_pins_before_commit(tmpdir):
     settings = {"packages": [
         "git:github.com/lpb-stack/lemonade-pi-plugin@0.0.77-lpb",
         "git:github.com/lpb-stack/lpb-memory@0.0.77-lpb",
-        "git:github.com/lpb-stack/pi-subagents@0.0.77-lpb",
+        # pi-subagents: upstream npm pin (fork retired) — bump must leave it alone
+        "npm:@tintinweb/pi-subagents@0.16.1",
     ]}
     (agent / "settings.json").write_text(json.dumps(settings))
     with _devstack_root_patch(root, tmpdir), \
@@ -200,7 +201,10 @@ def test_devstack_bump_syncs_pins_before_commit(tmpdir):
     pins = json.loads((agent / "settings.json").read_text())
     if isinstance(pins, dict):
         pins = pins.get("packages", [])
-    assert all(p.endswith("@0.0.79-lpb-dev") for p in pins)
+    git_pins = [p for p in pins if p.startswith("git:")]
+    assert all(p.endswith("@0.0.79-lpb-dev") for p in git_pins)
+    # the upstream npm pin is untouched
+    assert "npm:@tintinweb/pi-subagents@0.16.1" in pins
 
 
 def test_devstack_bump_missing_settings_is_noop(tmpdir):

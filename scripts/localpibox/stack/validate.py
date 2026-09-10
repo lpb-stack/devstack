@@ -17,6 +17,7 @@ from .repos import (
     AGENT_GIT,
     DEFAULT_AGENT_DIR,
     LPB_EXTENSION_REPOS,
+    NPM_EXTENSION_PACKAGES,
     WORKSPACE_REPOS,
     WORKSPACE_ROOT,
     _DEVSTACK_ROOT,
@@ -256,6 +257,20 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
 
         for pkg_name in LPB_EXTENSION_REPOS:
             pinned_tag = current_pins.get(pkg_name)
+            if pkg_name in NPM_EXTENSION_PACKAGES:
+                # Upstream npm pin (fork retired): presence-only check —
+                # the version tracks upstream releases, not the stack VERSION.
+                if pinned_tag:
+                    check(
+                        f"  {pkg_name} pinned (upstream npm)",
+                        True,
+                        f"npm:{NPM_EXTENSION_PACKAGES[pkg_name]}@{pinned_tag}",
+                    )
+                else:
+                    check(f"  {pkg_name} pinned (upstream npm)", False,
+                          f"npm:{NPM_EXTENSION_PACKAGES[pkg_name]} not found in settings.json",
+                          "Edit settings.json (or the template) — pin the npm package")
+                continue
             if pinned_tag:
                 if pinned_tag == target_version:
                     check(
