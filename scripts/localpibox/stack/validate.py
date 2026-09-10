@@ -17,10 +17,10 @@ from .repos import (
     AGENT_GIT,
     DEFAULT_AGENT_DIR,
     LPB_EXTENSION_REPOS,
-    NPM_EXTENSION_PACKAGES,
     WORKSPACE_REPOS,
     WORKSPACE_ROOT,
     _DEVSTACK_ROOT,
+    git_extension_pin,
 )
 from .version import _find_version_file, expected_branch, expected_pin_version, get_stack_env, get_stack_env_base, get_version
 from .serverhealth import run_server_checks
@@ -247,48 +247,32 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     cons.info("")
     cons.info("  Extension pins:")
 
-    # Determine target version for this pipeline
-    target_version = expected_pin_version(pipeline)
-
     settings_path = config_path / "settings.json"
     settings = _read_settings(config_path)
     if settings:
+        packages = [p for p in settings.get("packages", []) if isinstance(p, str)]
+        target_version = expected_pin_version(pipeline)
         current_pins = _get_pinned_versions(settings)
 
-        for pkg_name in LPB_EXTENSION_REPOS:
-            pinned_tag = current_pins.get(pkg_name)
-            if pkg_name in NPM_EXTENSION_PACKAGES:
-                # Upstream npm pin (fork retired): presence-only check —
-                # the version tracks upstream releases, not the stack VERSION.
-                if pinned_tag:
-                    check(
-                        f"  {pkg_name} pinned (upstream npm)",
-                        True,
-                        f"npm:{NPM_EXTENSION_PACKAGES[pkg_name]}@{pinned_tag}",
-                    )
-                else:
-                    check(f"  {pkg_name} pinned (upstream npm)", False,
-                          f"npm:{NPM_EXTENSION_PACKAGES[pkg_name]} not found in settings.json",
-                          "Edit settings.json (or the template) — pin the npm package")
-                continue
-            if pinned_tag:
-                if pinned_tag == target_version:
-                    check(
-                        f"  {pkg_name} pinned",
-                        True,
-                        f"@{pinned_tag} (matches VERSION)",
-                    )
-                else:
-                    check(
-                        f"  {pkg_name} pinned",
-                        False,
-                        f"@{pinned_tag} (expected: {target_version})",
-                        "lpb-config sync-pins",
-                    )
+        # Git-managed extension repos — version must match the stack VERSION.
+        for name in LPB_EXTENSION_REPOS:
+            pinned_tag = current_pins.get(name)
+            if pinned_tag is None:
+                check(f"  {name} pinned", False,
+                      "not found in settings.json", "lpb-config sync-pins")
+            elif pinned_tag == target_version:
+                check(f"  {name} pinned", True,
+                      f"@{pinned_tag} (matches VERSION)")
             else:
-                check(f"  {pkg_name} pinned", False,
-                      "not found in settings.json",
+                check(f"  {name} pinned", False,
+                      f"@{pinned_tag} (expected: {target_version})",
                       "lpb-config sync-pins")
+
+        # npm/bare packages — presence-only (not managed by the stack VERSION).
+        for pkg in packages:
+            if git_extension_pin(pkg):
+                continue  # version-managed, handled above
+            check(f"  {pkg} pinned (npm)", True, "presence-only, not version-tracked")
     else:
         check("settings.json exists", False,
               f"{settings_path} not found",

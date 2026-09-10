@@ -21,11 +21,11 @@ from .repos import (
     CONFIG_REPO,
     DEFAULT_AGENT_DIR,
     LPB_EXTENSION_REPOS,
-    NPM_EXTENSION_PACKAGES,
     UPSTREAM_REMOTES,
     WORKSPACE_REPOS,
     WORKSPACE_ROOT,
     _repo_remote,
+    git_extension_pin,
 )
 from .version import expected_branch, expected_pin_version, get_version
 
@@ -453,31 +453,27 @@ def _write_settings(agent_dir: str | Path, settings: dict) -> None:
 
 
 def _get_pinned_versions(settings: dict) -> dict[str, str]:
-    """Extract version pins for LPB extension repos from settings."""
+    """Extract version pins for the git-managed LPB extension repos.
+
+    npm/bare packages are NOT version-managed and are not returned — pi
+    manages their versions via `pi update --extensions`.
+    """
     pins: dict[str, str] = {}
     for pkg in settings.get("packages", []):
-        if not isinstance(pkg, str):
-            continue
-        for name, npm_pkg in NPM_EXTENSION_PACKAGES.items():
-            marker = f"npm:{npm_pkg}@"
-            if marker in pkg:
-                pins[name] = pkg.split("@")[-1]
-        for name in LPB_EXTENSION_REPOS:
-            if name in NPM_EXTENSION_PACKAGES:
-                continue
-            marker = f"lpb-stack/{name}@"
-            if marker in pkg:
-                pins[name] = pkg.split("@")[-1]
+        name = git_extension_pin(pkg)
+        if name:
+            pins[name] = pkg.split("@")[-1]
     return pins
 
 
 def _update_pinned_versions(settings: dict, target_version: str) -> list[tuple[str, str, str]]:
-    """Update LPB extension pins to target_version. Returns list of changes."""
+    """Update git-managed LPB extension pins to target_version. Returns changes.
+
+    npm/bare packages are left untouched — not managed by the stack VERSION.
+    """
     packages = settings.get("packages", [])
     changes: list[tuple[str, str, str]] = []
     for name in LPB_EXTENSION_REPOS:
-        if name in NPM_EXTENSION_PACKAGES:
-            continue  # upstream npm pin — not managed by the stack VERSION
         marker = f"git:github.com/lpb-stack/{name}@"
         for i, pkg in enumerate(packages):
             if isinstance(pkg, str) and pkg.startswith(marker):
@@ -532,17 +528,17 @@ def cmd_workspace_sync_pins(pipeline: str, cons: Console) -> int:
     cons.info(f"Target pins:  {target_version}")
     cons.info("")
 
-    # Check mismatches
+    # Check mismatches (git-managed extension repos only)
     mismatches = []
     for name in LPB_EXTENSION_REPOS:
-        if name in NPM_EXTENSION_PACKAGES:
-            cur = current_pins.get(name, "(unpinned)")
-            cons.info(f"  {name}: npm:{NPM_EXTENSION_PACKAGES[name]}@{cur} "
-                      f"(upstream pin — not managed by the stack VERSION)")
-            continue
         cur = current_pins.get(name, "(unpinned)")
         if cur != target_version:
             mismatches.append((name, cur, target_version))
+
+    # npm/bare packages: presence-only, not managed by the stack VERSION
+    for pkg in settings.get("packages", []):
+        if isinstance(pkg, str) and not git_extension_pin(pkg):
+            cons.info(f"  {pkg}: npm (not managed by the stack VERSION)")
 
     if not mismatches:
         cons.info("All extension pins already match LPB_VERSION.")

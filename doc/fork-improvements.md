@@ -8,14 +8,13 @@
 
 ## Repository Map
 
-This stack uses 5 repositories under `github.com/lpb-stack`. Two are forks
-of upstream repos; pi itself is no longer a stack repo (de-forked
-2026-08-31, see the retired-fork note below):
+This stack uses 4 repositories under `github.com/lpb-stack`. One is a fork
+of an upstream repo; pi and pi-subagents are no longer stack repos (de-forked
+2026-08-31 and 2026-09-10 respectively — see the retired-fork notes below):
 
 | Repo | Type | Upstream | Purpose |
 |---|---|---|---|
 | **`lpb-stack/lemonade-pi-plugin`** | Fork | `lemonade-sdk/lemonade-pi-plugin` | Lemonade provider — Qwen thinking protocol, vision, model catalog |
-| **`lpb-stack/pi-subagents`** | Fork | `tintinweb/pi-subagents` | Subagent model registry (local-first) |
 | **`lpb-stack/config`** | Original | — | User settings, skills, agents |
 | **`lpb-stack/devstack`** | Original | — | Docker dev environment + lpb launcher |
 | **`lpb-stack/lpb-memory`** | Original | — | Persistent memory extension |
@@ -96,11 +95,14 @@ more auditable than a formula.
 
 ---
 
-## Pi Subagents (`lpb-stack/pi-subagents`)
+## The Pi-Subagents Fork (`lpb-stack/pi-subagents`) — retired 2026-09-10
 
-Fork of `tintinweb/pi-subagents` (on top of upstream v0.16.1, merged into
-`lpb-dev`). Provides subagent model registry that removes
-Anthropic defaults and makes the stack fully local-first.
+The `lpb-stack/pi-subagents` fork (based on `tintinweb/pi-subagents` v0.16.1,
+last state on `lpb-dev`) is **retired**. pi now installs upstream
+`@tintinweb/pi-subagents` from npm (version tracked in `settings.json`), and
+the local-first behavior the fork provided is handled by the config repo's
+subagent presets — agent `.md` files omit the `model:` field, so subagents
+inherit the session model instead of hardcoded cloud defaults.
 
 ### Key Change: `globalDefaultModel`
 

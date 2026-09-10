@@ -73,7 +73,7 @@ lpb --help       # full usage
 | **VSCodium** | Web-based editor (`:web` image), connects over the OpenVSCode protocol |
 | **lemonade-pi-plugin** (forked) | Model provider for the local **Lemonade** server — Qwen thinking + vision support |
 | **lpb-memory** | Persistent memory + session search for the agent |
-| **pi-subagents** (forked) | Local-first subagent model registry (no hardcoded cloud models) |
+| **pi-subagents** | Subagent model registry — upstream `tintinweb/pi-subagents` installed via npm (no hardcoded cloud models) |
 | **agent-browser** + Chrome | Browser automation tools for the agent |
 | **MCP servers** | Exa (web search), Context7 (library docs), agent-browser |
 | **Lemonade** (host prerequisite) | Local model server — AMD/Strix Halo-optimized, serves GGUF models; on this host or any reachable host; model chosen by the user at setup (no default) |
@@ -211,7 +211,7 @@ patch.
 | Repo | Upstream | LocalPibox work | Update policy |
 |---|---|---|---|
 | **lemonade-pi-plugin** | `lemonade-sdk/lemonade-pi-plugin` (no stable release) | Qwen thinking + vision support | follow upstream `main`, check periodically |
-| **pi-subagents** | `tintinweb/pi-subagents` (v0.16.1) | centralized local-first subagent model registry | follow upstream; merge + repair as needed |
+| **pi-subagents** | `tintinweb/pi-subagents` (upstream, npm) | installed from upstream npm — no local fork since the 2026-09-10 de-fork; subagent model registry | track upstream releases |
 | **lpb-memory** | *(independent project)* | Pi memory extension (subprocess reviews) | no upstream to track |
 | **config** / **devstack** | — | own | own |
 
@@ -238,7 +238,7 @@ GitHub Actions (`.github/workflows/build-and-publish.yml`) runs on:
 Versioning is **manual**: `lpb-devstack bump` commits a new `VERSION`, and CI
 builds + tags only when VERSION changed in the pushed commit. Pipeline jobs:
 **VERSION check** → **test** (always) → **build & publish images** →
-**tag repos** (CI tags the other 4 stack repos on their pipeline branches) →
+**tag repos** (CI tags the other 3 stack repos on their pipeline branches) →
 **docs publish** (main pipeline only — publishes the stable docs version,
 gated on the docs being flagged ready via `lpb-devstack release docs-ready`
 before promotion) → **status**. Devstack itself is tracked by its `VERSION`
@@ -315,5 +315,5 @@ devstack/
 - [lpb-stack/pi](https://github.com/lpb-stack/pi) — retired pi fork (reference only; last state `pre-defork-0.0.71`)
 - [lpb-stack/config](https://github.com/lpb-stack/config) — agent config preset
 - [lpb-stack/lemonade-pi-plugin](https://github.com/lpb-stack/lemonade-pi-plugin) — Lemonade provider plugin
-- [lpb-stack/pi-subagents](https://github.com/lpb-stack/pi-subagents) — subagent model registry
+- [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) — subagent model registry (upstream, installed via npm; the `lpb-stack/pi-subagents` fork is retired)
 - [lpb-stack/lpb-memory](https://github.com/lpb-stack/lpb-memory) — persistent memory extension

@@ -1,6 +1,6 @@
 ---
 name: lpb-stack-repo-workflow
-description: Manage the 6 LocalPibox repos — manual versioning (lpb-devstack bump), stable releases, image builds, lpb.py.
+description: Manage the LocalPibox stack repos — manual versioning (lpb-devstack bump), stable releases, image builds, lpb.py.
 ---
 # LocalPibox Repository Workflow
 
@@ -39,9 +39,10 @@ CI: VERSION changed in pushed commit → tests → build + publish → tag 4 rep
 - **devstack/VERSION** — the only VERSION file in the stack (e.g. `0.0.N-lpb-dev`)
 - **Format:** dev pipeline `0.x.y-lpb-dev`, main pipeline `0.x.y-lpb`
 - **`lpb-devstack bump`** is the **dev release trigger**: before committing a
-  VERSION change it gates on all 5 stack repos being on their dev branch,
-  fully pushed, and committed (CI tags the *remote* dev heads — unpushed or
-  uncommitted local work would ship invisibly). `bump --force` bypasses.
+  VERSION change it gates on every tagged stack repo (all except devstack)
+  being on its dev branch, fully pushed, and committed (CI tags the *remote*
+  dev heads — unpushed or uncommitted local work would ship invisibly).
+  `bump --force` bypasses.
   The docs gate is main-pipeline only (`release promote`).
 - **`lpb-devstack bump`** preserves major.minor, increments patch (or
   `--minor` / `--major` / `--set`), keeps the current suffix, and commits
@@ -67,7 +68,7 @@ CI: VERSION changed in pushed commit → tests → build + publish → tag 4 rep
 | **config** | workspace (agent preset) | `dev` | `main` |
 | **lpb-memory** | workspace + extension | `dev` | `main` |
 | **pi** | reference clone (de-forked — image installs pi from npm at `LPB_PI_VERSION`) | — | — |
-| **pi-subagents** | extension | `lpb-dev` | `lpb` |
+| **pi-subagents** | extension (upstream npm — de-forked 2026-09-10, not a git repo) | — | — |
 | **lemonade-pi-plugin** | extension | `lpb-dev` | `lpb` |
 
 Org: all repos live under **`github.com/lpb-stack`** (migrated from
@@ -81,7 +82,6 @@ the GitHub org and GHCR paths use `lpb-stack`.
 Workspace:
   /home/lpb/workspace/devstack            (real clone, single source)
   /home/lpb/workspace/pi                  (reference clone of the retired fork)
-  /home/lpb/workspace/pi-subagents        (symlink → agent git clone)
   /home/lpb/workspace/lemonade-pi-plugin  (symlink → agent git clone)
   /home/lpb/workspace/lpb-memory          (symlink → agent git clone)
 
@@ -90,7 +90,10 @@ Agent config (cloned from lpb-stack/config by start.sh at container start):
 
 Extension clones (pi loads these per settings.json pins):
   /home/lpb/.pi/agent/git/github.com/lpb-stack/
-      lemonade-pi-plugin, lpb-memory, pi-subagents
+      lemonade-pi-plugin, lpb-memory
+
+  pi-subagents is NOT a git clone — it installs from the upstream npm
+  package (@tintinweb/pi-subagents) per the settings.json pin.
 
 ⚠️ Extensions update at runtime via `pi update --extensions`.
    They are NOT baked into Docker images.
@@ -102,9 +105,9 @@ Extension clones (pi loads these per settings.json pins):
 
 - **`dev`** (devstack, config, lpb-memory): primary development. Default on GitHub.
 - **`main`** (devstack, config, lpb-memory): stable release branch.
-- **`lpb-dev`** (pi-subagents, lemonade-pi-plugin): active development from
+- **`lpb-dev`** (lemonade-pi-plugin): active development from
   upstream + LPB patches. Default on GitHub.
-- **`lpb`** (pi-subagents, lemonade-pi-plugin): stable branch — receives
+- **`lpb`** (lemonade-pi-plugin): stable branch — receives
   clean merges from `lpb-dev` via the release procedure. Divergence from
   `lpb-dev` is normal during active development.
 
@@ -138,7 +141,7 @@ docs sync + review happens at release time via `docs-ready`.
 #    commits DOCS_READY=<stable-version> on the docs branch + pushes)
 lpb-devstack release docs-ready
 
-# 1. Readiness check (all 5 repos + docs verdict, non-destructive, fetches first)
+# 1. Readiness check (all tagged repos + docs verdict, non-destructive, fetches first)
 lpb-devstack release status
 
 # 2. Inspect the exact plan without changing anything

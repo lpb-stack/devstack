@@ -47,11 +47,13 @@ WORKSPACE_REPOS = [
     ("devstack",          False, False, "dev",    "main"),
     ("lemonade-pi-plugin", True,  True,  "lpb-dev", "lpb"),
     ("lpb-memory",        True,  True,  "dev",    "main"),
-    ("pi-subagents",      True,  True,  "lpb-dev", "lpb"),
     # pi is no longer a stack repo (de-forked 2026-08-31 — the lpb-stack/pi
     # fork is retired; the image installs mainstream pi from the npm
     # registry at LPB_PI_VERSION). A local workspace/pi clone may remain as
     # a reference only (retired state: tag pre-defork-0.0.71).
+    # pi-subagents is no longer a git repo either (de-forked 2026-09-10 —
+    # the lpb-stack/pi-subagents fork is retired; it installs from the
+    # upstream npm package, pinned in settings.json without a version).
 ]
 
 # The config repo lives in the agent dir (DEFAULT_AGENT_DIR) instead of the
@@ -64,32 +66,46 @@ CONFIG_REPO = ("config", "dev", "main")
 # (added on missing, repaired on drift) and fetches it, so upstream updates
 # are visible without manual remote setup.
 UPSTREAM_REMOTES = {
-    "pi-subagents": "https://github.com/tintinweb/pi-subagents.git",
     "lemonade-pi-plugin": "https://github.com/lemonade-sdk/lemonade-pi-plugin.git",
 }
 
 
 def stack_repos() -> list[tuple[str, str, str]]:
-    """All 6 stack repos: (name, dev_branch, main_branch) — single source of truth."""
+    """All stack git repos: (name, dev_branch, main_branch) — single source of truth.
+
+    This is the set of repos the stack *git-manages* (workspace + config).
+    npm-installed extensions (any 'npm:' or bare package in settings.json)
+    are NOT here — they are not git repos the stack clones or tags.
+    """
     return [(n, d, m) for (n, _sym, _ext, d, m) in WORKSPACE_REPOS] + [CONFIG_REPO]
 
 
-# Repos tagged per release — the 5 stack repos excluding devstack (devstack
+# Repos tagged per release — every stack git repo excluding devstack (devstack
 # is tracked by its VERSION file, never tagged). Mirrors the CI tag-repos job.
 TAG_REPOS = [
     (n, d, m) for (n, _sym, _ext, d, m) in WORKSPACE_REPOS if n != "devstack"
 ] + [CONFIG_REPO]
 
-# Pi extension repos (settings.json pin targets).
+# Pi extension repos (settings.json pin targets) that are git-managed and
+# version-tracked by the stack: the extension repos in WORKSPACE_REPOS.
+# Any other package in settings.json (an 'npm:' or bare specifier) is NOT here
+# — pi manages its version via `pi update --extensions`, so pin sync and
+# validate treat it as a presence-only check.
 LPB_EXTENSION_REPOS = [n for (n, _sym, is_ext, _d, _m) in WORKSPACE_REPOS if is_ext]
 
-# Extensions installed from an upstream npm package instead of the fork
-# clone (fork retired). Pin versions follow upstream releases, NOT the
-# stack VERSION — pin sync leaves them alone and validate treats them as
-# a presence-only check.
-NPM_EXTENSION_PACKAGES = {
-    "pi-subagents": "@tintinweb/pi-subagents",
-}
+# A version-managed pin is 'git:github.com/lpb-stack/<name>@<version>' where
+# <name> is in LPB_EXTENSION_REPOS. Every other package specifier (npm: or
+# bare) is presence-only — not tracked by the stack VERSION.
+GIT_EXTENSION_PREFIX = "git:github.com/lpb-stack/"
+
+
+def git_extension_pin(pkg: object) -> str | None:
+    """Return the extension repo name if *pkg* is a version-managed git pin
+    for one of LPB_EXTENSION_REPOS, else None (i.e. an npm/bare package)."""
+    if not isinstance(pkg, str) or not pkg.startswith(GIT_EXTENSION_PREFIX):
+        return None
+    name = pkg[len(GIT_EXTENSION_PREFIX):].split("@", 1)[0]
+    return name if name in LPB_EXTENSION_REPOS else None
 
 
 def repo_path(name: str) -> Path:

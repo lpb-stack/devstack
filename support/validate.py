@@ -32,8 +32,11 @@ from localpibox.log import Console  # noqa: E402
 from localpibox.run import run_cmd, which  # noqa: E402
 
 EXT_BASE = Path("/home/lpb/.pi/agent/git")
-CHECK_REPOS = ("lpb-stack/lemonade-pi-plugin", "lpb-stack/lpb-memory",
-               "lpb-stack/pi-subagents")
+# Git-cloned extensions (lemonade-pi-plugin, lpb-memory). pi-subagents is NOT
+# here — it de-forked to the upstream npm package (installed by pi, not a git
+# clone under the agent dir), so its presence is checked via the settings.json
+# pin by the full validator instead.
+CHECK_REPOS = ("lpb-stack/lemonade-pi-plugin", "lpb-stack/lpb-memory")
 SQLITE_LIB_DIRS = ["/usr/lib/x86_64-linux-gnu"]
 
 

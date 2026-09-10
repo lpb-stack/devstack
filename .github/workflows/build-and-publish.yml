@@ -304,14 +304,12 @@ jobs:
           # dev pipeline: dev branches; main pipeline: stable branches
           if [ "${GITHUB_REF_NAME}" = "main" ]; then
             declare -A REPO_BRANCHS=(
-              ["lpb-stack/pi-subagents"]="lpb"
               ["lpb-stack/lemonade-pi-plugin"]="lpb"
               ["lpb-stack/config"]="main"
               ["lpb-stack/lpb-memory"]="main"
             )
           else
             declare -A REPO_BRANCHS=(
-              ["lpb-stack/pi-subagents"]="lpb-dev"
               ["lpb-stack/lemonade-pi-plugin"]="lpb-dev"
               ["lpb-stack/config"]="dev"
               ["lpb-stack/lpb-memory"]="dev"
@@ -398,10 +396,10 @@ jobs:
           VERSION=$(git show origin/main:VERSION | tr -d '[:space:]')
           mkdir -p ws/git
           git clone --quiet https://github.com/lpb-stack/config.git ws/config
-          for r in lpb-memory pi-subagents lemonade-pi-plugin; do
+          for r in lpb-memory lemonade-pi-plugin; do
             git clone --quiet "https://github.com/lpb-stack/$r.git" "ws/git/$r"
           done
-          for d in ws/config ws/git/lpb-memory ws/git/pi-subagents \
+          for d in ws/config ws/git/lpb-memory \
                    ws/git/lemonade-pi-plugin; do
             git -C "$d" fetch --quiet --depth 1 origin tag "$VERSION"
             git -C "$d" checkout -q "$VERSION"

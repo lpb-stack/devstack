@@ -81,7 +81,7 @@ Settings.json is **template-driven**, not git-tracked:
 
 Example pins:
 - Fork extension (stack-versioned): `git:github.com/lpb-stack/lpb-memory@0.0.N-lpb-dev`
-- Upstream npm (fork retired, version follows upstream releases): `npm:@tintinweb/pi-subagents@0.19.0`
+- Upstream npm (no version pin — pi updates it via `pi update --extensions`): `npm:@tintinweb/pi-subagents`
 
 ## lpb-memory Config Lifecycle
 
