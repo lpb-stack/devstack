@@ -1,6 +1,6 @@
 # Thinking Benchmark — Test Set, Procedure & Results
 
-> ⚠️ Point-in-time results (2026-09-07). The tables below are a snapshot from
+> ⚠️ Point-in-time results (2026-09-10). The tables below are a snapshot from
 > the stack versions listed in each run; re-run after every pi / plugin /
 > server bump and replace the tables (see [Procedure](#procedure)).
 
@@ -62,54 +62,57 @@ The report stamps pi version, plugin git rev, and server build fingerprint —
 keep those in the tables when updating. Runs are sequential (single-GPU
 server); a full model takes ~10-20 min.
 
-## Results (2026-09-07)
+## Results (2026-09-10)
 
-Server: llama.cpp `b10818` · pi 0.85.1 · lemonade-pi-plugin `81b8346`
-· 1 run per cell · wire fidelity 19/19 (Qwen) and 14/14 (Gemma, no effortMap)
+Server: llama.cpp `b10865` (`d4389a4dd`) · pi 0.85.1 · lemonade-pi-plugin
+`54973b2` · 1 run per cell · wire fidelity 19/19 (Qwen3.8), 19/19 (Qwen3.6,
+with effortMap) and 15/15 (Gemma, no effortMap)
 
 ### Qwen3.8-27B-GGUF (dense)
 
 | Level | Score | Avg reasoning chars | Avg time |
 |---|---|---|---|
-| off | 10/12 (83%) | 0 | 11.8s |
-| minimal | **12/12 (100%)** | 379 | 10.9s |
-| low | **12/12 (100%)** | 378 | 10.3s |
-| medium | **12/12 (100%)** | 442 | 12.4s |
-| high | 11/12 (92%) | 596 | 11.7s |
+| off | 10/12 (83%) | 0 | 12.5s |
+| minimal | **12/12 (100%)** | 357 | 10.7s |
+| low | **12/12 (100%)** | 390 | 10.8s |
+| medium | **12/12 (100%)** | 385 | 12.3s |
+| high | 11/12 (92%) | 384 | 8.8s |
 
-**Thinking lift:** `math_coin_prob` and (usually) `math_log_eq` fail at off
-and pass with thinking on. The only model in this set where the level dial
-measurably moves quality.
+**Thinking lift:** `math_coin_prob` and `math_log_eq` fail at off and pass
+with thinking on (high again misses `math_log_eq`). The only model in this
+set where the level dial measurably moves quality.
 
 ### Qwen3.6-35B-A3B-MTP-GGUF (MoE, MTP draft)
 
 | Level | Score | Avg reasoning chars | Avg time |
 |---|---|---|---|
-| off | 11/12 (92%) | 0 | 4.0s |
-| minimal | 11/12 (92%) | 3112 | 19.7s |
-| low | 11/12 (92%) | 2921 | 17.7s |
-| medium | 11/12 (92%) | 5910 | 33.1s |
-| high | 11/12 (92%) | 3697 | 22.3s |
+| off | 11/12 (92%) | 0 | 4.7s |
+| minimal | 11/12 (92%) | 3329 | 19.1s |
+| low | 11/12 (92%) | 3485 | 18.9s |
+| medium | 11/12 (92%) | 4159 | 22.4s |
+| high | 11/12 (92%) | 3646 | 19.1s |
 
-**Flat band:** reasoning stays ~3-6k chars regardless of level — the model
-thinks its natural length and stops before any budget is hit. `math_log_eq`
-fails at **all** levels (capability gap, not a thinking effect). Thinking
-adds latency without accuracy gain on this set.
+**Flat band:** reasoning stays ~3-4k chars regardless of level — the model
+thinks its natural length and stops before any budget is hit (effortMap
+maps high→xhigh on the wire, verified). `math_log_eq` fails at **all**
+levels (capability gap, not a thinking effect). Thinking adds latency
+without accuracy gain on this set.
 
 ### Gemma-4-26B-A4B-it-MTP-GGUF (MoE, MTP draft)
 
 | Level | Score | Avg reasoning chars | Avg time |
 |---|---|---|---|
-| off | 11/12 (92%) | 0 | 3.0s |
-| minimal | 11/12 (92%) | 1239 | 9.7s |
-| low | 11/12 (92%) | 1494 | 11.3s |
-| medium | 11/12 (92%) | 1373 | 10.3s |
-| high | 11/12 (92%) | 1149 | 8.9s |
+| off | 11/12 (92%) | 0 | 3.4s |
+| minimal | 11/12 (92%) | 1178 | 9.7s |
+| low | 11/12 (92%) | 1184 | 9.5s |
+| medium | 11/12 (92%) | 1421 | 11.0s |
+| high | 11/12 (92%) | 1255 | 9.8s |
 
-Same pattern as Qwen3.6: flat reasoning band, `math_log_eq` fails at all
-levels, no thinking lift on this set. No effortMap in the catalog — levels
-pass through unchanged (all accepted by its template). User-tier
-`maxTokens: 8192` correctly re-clamps medium/high budgets to 7168.
+Same pattern as Qwen3.6: flat reasoning band (~1.2-1.4k chars),
+`math_log_eq` fails at all levels, no thinking lift on this set. No
+`effortMap` in the catalog — levels pass through unchanged (all accepted
+by its template). User-tier `maxTokens: 16384` re-clamps the high budget
+to 15360.
 
 ### Cross-model reading
 

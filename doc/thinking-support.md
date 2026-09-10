@@ -1,8 +1,8 @@
 # Thinking Support: Implementation, Validation & Roadmap
 
-> Last updated: 2026-09-07  
+> Last updated: 2026-09-10  
 > Status: **Fixed & validated** — all wire fields honored by the current
-> server build (b10818); per-level behavior is covered by the reproducible
+> server build (b10865); per-level behavior is covered by the reproducible
 > benchmark in [Thinking Benchmark](thinking-benchmark.md).
 
 ---
@@ -161,9 +161,10 @@ if (isQwen) {
 
 ## 5. Server Version Analysis
 
-Current server build: **b10818** (live-verified 2026-09-05/06). The b10375
-table below is historical; the live behavior matrix for b10818 is in the
-[benchmark doc](thinking-benchmark.md) and the validate probes.
+Current server build: **b10865** (`d4389a4dd`, live-verified 2026-09-10 via
+the benchmark run — P5 off-switch cells on all three catalogued models). The
+b10375 table below is historical; the live behavior matrix for b10865 is in
+the [benchmark doc](thinking-benchmark.md) and the validate probes.
 
 ### ✅ Included since b10375
 
@@ -181,7 +182,7 @@ table below is historical; the live behavior matrix for b10818 is in the
 
 | Feature | Status | Action | Priority |
 |---|---|---|---|
-| **Per-request reasoning toggle** | ✅ WORKS on b10818 — top-level `enable_thinking` honored per-request (validated 2026-09-05/06, all catalogued models) | — | ~~P0~~ done |
+| **Per-request reasoning toggle** | ✅ WORKS on b10865 — top-level `enable_thinking` honored per-request (validated 2026-09-05/06, re-validated 2026-09-10 on all three catalogued models) | — | ~~P0~~ done |
 | **Configure `--reasoning-budget-message`** | ✅ Configured on the current server; probed live by `lpb-devstack validate` (warning-only) | — | ~~P1~~ done |
 | **`--reasoning-format none`** workaround | Available | Consider for Qwen3.6 reliability | P2 |
 
@@ -191,7 +192,7 @@ table below is historical; the live behavior matrix for b10818 is in the
 
 ### P0: Per-request reasoning toggle (highest impact) — RESOLVED
 
-> ✅ Resolved on the current build (b10818, validated 2026-09-05/06):
+> ✅ Resolved on the current build (b10865, re-validated 2026-09-10):
 > top-level `enable_thinking: false` is honored per-request in both
 > directions on all catalogued Qwen models — zero reasoning in every off
 > cell of the benchmark. PR #22336 tracking no longer blocking. The original
@@ -269,15 +270,15 @@ The per-request reasoning toggle (upstream PR #22336) would further improve this
 
 | Item | Value |
 |---|---|
-| pi version | 0.84.3 |
+| pi version | 0.85.1 |
 | pi PR for budget field | #8275 |
 | pi field name for llama.cpp | `"thinking_budget_tokens"` |
-| llama.cpp build | b10818 (current, live-verified) |
+| llama.cpp build | b10865 (current, live-verified 2026-09-10) |
 | Model tested | Qwen3.6-35B-A3B-MTP-GGUF |
 | Server URL | http://192.168.0.13:13305 |
 | DEFAULT_THINKING_BUDGETS | {minimal:1024, low:2048, medium:8192, high:16384} |
 | MIN_ANSWER_TOKENS | 1024 |
-| Qwen MTP maxTokens | 15728 (0.06 × 262k, clamped 16384) |
+| maxTokens | exact per-model value from the model card (Qwen: 16384; the context-ratio formula was retired 2026-09-02) |
 
 ---
 
