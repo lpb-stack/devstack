@@ -262,8 +262,13 @@ Both tools are thin CLIs over the shared `scripts/localpibox/stack/` library
 6. `lpb-devstack validate` checks pins match the current stack version
 7. Persistent on the host volume — survives container rebuilds
 
-Pins look like: `git:github.com/lpb-stack/pi-subagents@<VERSION>`
-(e.g. `...pi-subagents@0.0.N-lpb-dev`)
+Pins look like:
+- `git:github.com/lpb-stack/<repo>@<VERSION>` — stack-versioned fork
+  extensions (lemonade-pi-plugin, lpb-memory), e.g. `...lpb-memory@0.0.N-lpb-dev`
+- `npm:@tintinweb/pi-subagents@<upstream-version>` — pi-subagents is pinned
+  to the **upstream npm package** (fork retired); its version follows
+  upstream releases, NOT the stack VERSION. Pin sync leaves it alone;
+  `lpb-devstack validate` treats it as a presence-only check.
 
 ## lpb-memory Config Lifecycle
 

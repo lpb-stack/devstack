@@ -67,7 +67,7 @@ Extensions are pinned in the `packages` array of `settings.json` as
     "git:github.com/lpb-stack/lemonade-pi-plugin@0.0.N-lpb-dev",
     "git:github.com/lpb-stack/lpb-memory@0.0.N-lpb-dev",
     "npm:pi-mcp-adapter",
-    "git:github.com/lpb-stack/pi-subagents@0.0.N-lpb-dev",
+    "npm:@tintinweb/pi-subagents@0.19.0",
     "npm:pi-powerline-footer",
     "@upstash/context7-mcp"
   ]
