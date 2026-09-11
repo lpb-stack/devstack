@@ -1,0 +1,1351 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Documentation for the LocalPibox development stack — versioned per stack tag">
+      
+      
+      
+        <link rel="canonical" href="https://lpb-stack.github.io/devstack/0.0.83-lpb/reference/thinking-support/">
+      
+      
+        <link rel="prev" href="../fork-improvements/">
+      
+      
+        <link rel="next" href="../thinking-benchmark/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Thinking support - LocalPibox Stack</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="teal">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#thinking-support" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="LocalPibox Stack" class="md-header__button md-logo" aria-label="LocalPibox Stack" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            LocalPibox Stack
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Thinking support
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="teal" data-md-color-accent="teal"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="slate" data-md-color-primary="teal" data-md-color-accent="teal"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/lpb-stack/devstack" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpb-stack/devstack
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="LocalPibox Stack" class="md-nav__button md-logo" aria-label="LocalPibox Stack" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    LocalPibox Stack
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/lpb-stack/devstack" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    lpb-stack/devstack
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../repo-map/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Repo map
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../operations/subagent-spawning-pattern/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Subagent spawning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI & configuration
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    CLI & configuration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lpb-cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lpb CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lpb-config/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lpb-config
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lpb-devstack/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lpb-devstack
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env-vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../config-repo/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Config repo
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../forking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Forking & repointing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Stack internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Stack internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../lpb-memory-overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    lpb-memory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fork-improvements/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fork improvements
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thinking support
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thinking support
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-architecture-how-thinking-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Architecture: How Thinking Works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-wire-format-what-each-field-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Wire format: what each field does
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-why-its-implemented-this-way" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Why it's implemented this way
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-current-behavior-validated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Current behavior (validated)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-server-side-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Server-side configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-open-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Open items
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix: Reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../thinking-benchmark/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Thinking benchmark
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#1-architecture-how-thinking-works" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        1. Architecture: How Thinking Works
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#2-wire-format-what-each-field-does" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        2. Wire format: what each field does
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#3-why-its-implemented-this-way" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        3. Why it's implemented this way
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#4-current-behavior-validated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        4. Current behavior (validated)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#5-server-side-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        5. Server-side configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#6-open-items" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        6. Open items
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#appendix-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Appendix: Reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="thinking-support">Thinking Support<a class="headerlink" href="#thinking-support" title="Permanent link">&para;</a></h1>
+<blockquote>
+<p>Last updated: 2026-09-11
+Status: <strong>Implemented &amp; validated</strong> — all wire fields honored by the current
+server build (b10865). Per-level behavior is covered by the reproducible
+benchmark in <a href="../thinking-benchmark/">Thinking Benchmark</a>.</p>
+</blockquote>
+<p>Pi's <code>/thinking</code> levels (off | minimal | low | medium | high) control reasoning
+depth on the lemonade-served Qwen models. The stack implements this with 100%
+upstream mechanisms — no pi fork, no server patches — so it survives pi and
+llama.cpp upgrades.</p>
+<hr />
+<h2 id="1-architecture-how-thinking-works">1. Architecture: How Thinking Works<a class="headerlink" href="#1-architecture-how-thinking-works" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>┌──────────────────────────────────────────────────────────────────┐
+│  Pi (pi.dev) — 0.85.1 (mainstream, from npm)                     │
+│                                                                  │
+│  User selects thinking level: /thinking →                        │
+│  off | minimal | low | medium | high                             │
+│  Pi sends (top-level request fields):                            │
+│  {                                                               │
+│    reasoning_effort: &quot;minimal&quot; | &quot;low&quot; | &quot;medium&quot; | &quot;high&quot;       │
+│    thinking_budget_tokens: 2048 | 3072 | 8192 | 16384            │
+│    max_completion_tokens: 16384        (per-model maxTokens)     │
+│  }                                                               │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │  HTTP POST /v1/chat/completions
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  lemonade-pi-plugin — per-request payload tuning                 │
+│  (per-model catalog: model-params.json, user tier over plugin)   │
+│                                                                  │
+│  • P2 budget: min(catalog level, maxTokens − 1024)               │
+│  • effortMap: pi level → reasoning_effort the template accepts   │
+│    (Qwen3.8: minimal→low, high→xhigh)                            │
+│  • P3 sampling row: thinking (on) / nonThinking (off)            │
+│  • P5 off level: offParams { enable_thinking: false }            │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │  tuned request
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│  Lemonade server (llama.cpp b10865)                              │
+│                                                                  │
+│  • enable_thinking → per-request on/off (honored per-request)    │
+│  • thinking_budget_tokens → hard cap on thinking tokens          │
+│  • reasoning_effort → consumed by the Qwen chat template         │
+│    (names outside its vocabulary are rejected — effortMap        │
+│    exists so the wire always carries an accepted value)          │
+└──────────────────────────────────────────────────────────────────┘
+</code></pre></div>
+<h2 id="2-wire-format-what-each-field-does">2. Wire format: what each field does<a class="headerlink" href="#2-wire-format-what-each-field-does" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Set by</th>
+<th>Server behavior (b10865)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>enable_thinking</code> (in <code>chat_template_kwargs</code>)</td>
+<td>Pi <code>qwen-chat-template</code> format; plugin <code>offParams</code> at the off level</td>
+<td>Toggles the thinking block. <strong>Honored per-request</strong> — one server instance serves both thinking and non-thinking modes.</td>
+</tr>
+<tr>
+<td><code>thinking_budget_tokens</code> (top-level)</td>
+<td>Pi computes a per-level default; the plugin re-clamps it from the per-model catalog (P2)</td>
+<td><strong>Hard cap</strong> on thinking tokens — the only per-level knob that changes how long the model thinks. When reached, the model transitions to the answer.</td>
+</tr>
+<tr>
+<td><code>reasoning_effort</code> (top-level)</td>
+<td>Pi sends its level; the plugin remaps it via the model's <code>effortMap</code></td>
+<td>Consumed by the Qwen chat template. Effort names outside a model's vocabulary are <strong>rejected</strong> by the server, which is why the plugin maintains a per-model mapping instead of passing pi's strings through.</td>
+</tr>
+<tr>
+<td><code>max_completion_tokens</code> (top-level)</td>
+<td>Per-model <code>maxTokens</code> (exact value from the vendor model card)</td>
+<td>Total completion ceiling. P2 re-clamps the budget to <code>maxTokens − 1024</code> so the answer always has headroom.</td>
+</tr>
+</tbody>
+</table>
+<p>At the <strong>off</strong> level the plugin sends no budget and no effort, and adds
+<code>offParams</code> (currently <code>{ enable_thinking: false }</code>) — the benchmark asserts
+zero reasoning tokens in every off cell.</p>
+<h2 id="3-why-its-implemented-this-way">3. Why it's implemented this way<a class="headerlink" href="#3-why-its-implemented-this-way" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Only upstream mechanisms.</strong> Pi's <code>qwen-chat-template</code> thinking format plus
+  the plugin's per-request tuning cover everything — no pi fork patch, no
+  server patch. Upgrading pi or llama.cpp never breaks thinking.</li>
+<li><strong>Budget is the control, effort is the hint.</strong> The budget cap produces the
+  measurable per-level difference in thinking depth; <code>reasoning_effort</code>
+  shapes <em>how</em> the model reasons within that cap. Both are honored; neither
+  alone is sufficient.</li>
+<li><strong>Per-model catalog, not code.</strong> Budgets, effort mappings, vendor-recommended
+  sampling rows, and off-level params live in <code>model-params.json</code> (user tier
+  overrides plugin tier, edited via <code>/lemonade tune</code>). Adding or tuning a model
+  changes data, not code.</li>
+<li><strong>Answer headroom guaranteed.</strong> The budget is re-clamped to
+  <code>maxTokens − 1024</code>, so thinking can never consume the entire completion
+  window and truncate the answer.</li>
+</ul>
+<h2 id="4-current-behavior-validated">4. Current behavior (validated)<a class="headerlink" href="#4-current-behavior-validated" title="Permanent link">&para;</a></h2>
+<p>All wire fields above are honored per-request on the current build (b10865),
+validated 2026-09-10 on all three catalogued models via the benchmark:</p>
+<table>
+<thead>
+<tr>
+<th>Level</th>
+<th>Typical outcome</th>
+<th>Use for</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>off</td>
+<td>zero thinking tokens (P5)</td>
+<td>Lookups, formatting, simple Q&amp;A</td>
+</tr>
+<tr>
+<td>minimal / low</td>
+<td>short thinking, fast wall time</td>
+<td>quick answers, small edits</td>
+</tr>
+<tr>
+<td>medium</td>
+<td>balanced reasoning (default)</td>
+<td>code changes, analysis</td>
+</tr>
+<tr>
+<td>high</td>
+<td>deep deliberation, longest wall time</td>
+<td>multi-step problems, hard debugging</td>
+</tr>
+</tbody>
+</table>
+<p>Thinking length scales monotonically with the budget and every level produces a
+complete answer (<code>finish_reason: stop</code>). The <a href="../thinking-benchmark/">Thinking Benchmark</a>
+documents the test set, the wire-fidelity assertions, and the per-model
+results that are regenerated with every release tag.</p>
+<h2 id="5-server-side-configuration">5. Server-side configuration<a class="headerlink" href="#5-server-side-configuration" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Per-request <code>enable_thinking</code></strong> — honored in both directions on all
+  catalogued models (re-validated 2026-09-10). No duplicate server process
+  needed for non-thinking mode.</li>
+<li><strong><code>--reasoning-budget-message</code></strong> — configured on the current server; tells
+  the model to answer once the budget is exhausted (meaningful quality
+  difference vs. raw truncation). Probed live by <code>lpb-devstack validate</code>
+  (warning-only).</li>
+<li><strong><code>--reasoning-format none</code></strong> — available workaround if the default
+  (DeepSeek-oriented) reasoning parser mis-handles Qwen's inline XML tags
+  (silent tag stripping, stream corruption). Not enabled; keep in mind for
+  Qwen3.6 reliability issues.</li>
+</ul>
+<h2 id="6-open-items">6. Open items<a class="headerlink" href="#6-open-items" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Upstream PR #22336 — first-class per-request <code>reasoning</code> boolean in the OpenAI API</td>
+<td>Tracking; would make the <code>enable_thinking</code> keyword extra first-class. Not blocking — per-request <code>enable_thinking</code> already works.</td>
+</tr>
+<tr>
+<td><code>--reasoning-format none</code></td>
+<td>Consider enabling for Qwen3.6 if parser-related corruption appears. Trade-off: client-side thinking/answer splitting.</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="appendix-reference">Appendix: Reference<a class="headerlink" href="#appendix-reference" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Item</th>
+<th>Value</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>pi version</td>
+<td>0.85.1 (mainstream, installed from npm at <code>LPB_PI_VERSION</code>)</td>
+</tr>
+<tr>
+<td>llama.cpp build</td>
+<td>b10865 (live-verified 2026-09-10)</td>
+</tr>
+<tr>
+<td>Pi default budgets (fallback)</td>
+<td>minimal: 1024, low: 2048, medium: 8192, high: 16384</td>
+</tr>
+<tr>
+<td>Budget re-clamp</td>
+<td><code>min(catalog level, maxTokens − 1024)</code></td>
+</tr>
+<tr>
+<td>maxTokens</td>
+<td>exact per-model value from the vendor model card (Qwen: 16384)</td>
+</tr>
+<tr>
+<td>Per-model catalog</td>
+<td><code>lemonade-pi-plugin/lib/model-params.json</code> (user tier in <code>~/.pi/agent</code>)</td>
+</tr>
+<tr>
+<td>Tuning</td>
+<td><code>/lemonade tune</code> in Pi</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.top", "content.code.copy", "search.suggest", "search.highlight"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
