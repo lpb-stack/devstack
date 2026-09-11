@@ -6,7 +6,9 @@ from __future__ import annotations
 from testharness import run_lpbx_suite, _bare_remote, _quiet_console, _load_script, SCRIPTS_DIR
 
 import os
+import json
 import subprocess
+from pathlib import Path
 from contextlib import ExitStack
 from unittest import mock
 
@@ -169,6 +171,50 @@ def test_devstack_bump_gate_blocks_and_force_bypasses(tmpdir):
     finally:
         for p in patches:
             p.stop()
+
+
+def test_devstack_bump_syncs_pins_before_commit(tmpdir):
+    """bump updates settings.json pins to the NEW version before committing
+    (post-stable-release case: pins sit at the stable tag; without this the
+    pre-commit validate fails and a post-hook sync would target the old
+    version)."""
+    root = tmpdir / "devstack"
+    root.mkdir()
+    (root / "VERSION").write_text("0.0.78-lpb-dev\n")
+    agent = tmpdir / "agent"
+    agent.mkdir(parents=True, exist_ok=True)
+    settings = {"packages": [
+        "git:github.com/lpb-stack/lemonade-pi-plugin@0.0.77-lpb",
+        "git:github.com/lpb-stack/lpb-memory@0.0.77-lpb",
+        # pi-subagents: upstream npm pin (fork retired) — bump must leave it alone
+        "npm:@tintinweb/pi-subagents@0.16.1",
+    ]}
+    (agent / "settings.json").write_text(json.dumps(settings))
+    with _devstack_root_patch(root, tmpdir), \
+         mock.patch.object(repos_mod, "DEFAULT_AGENT_DIR", str(agent)), \
+         mock.patch.object(ws_mod, "_read_settings",
+                           lambda ad: json.loads((Path(ad) / "settings.json").read_text())), \
+         mock.patch.object(ws_mod, "_write_settings",
+                           lambda ad, s: (Path(ad) / "settings.json").write_text(json.dumps(s))):
+        code = ld.cmd_bump(_quiet_console(), no_commit=True)
+    assert code == 0
+    pins = json.loads((agent / "settings.json").read_text())
+    if isinstance(pins, dict):
+        pins = pins.get("packages", [])
+    git_pins = [p for p in pins if p.startswith("git:")]
+    assert all(p.endswith("@0.0.79-lpb-dev") for p in git_pins)
+    # the upstream npm pin is untouched
+    assert "npm:@tintinweb/pi-subagents@0.16.1" in pins
+
+
+def test_devstack_bump_missing_settings_is_noop(tmpdir):
+    """No settings.json → pin sync is a no-op, bump still succeeds."""
+    root = tmpdir / "devstack"
+    root.mkdir()
+    (root / "VERSION").write_text("0.0.57-lpb-dev\n")
+    with _devstack_root_patch(root, tmpdir), \
+         mock.patch.object(repos_mod, "DEFAULT_AGENT_DIR", str(tmpdir / "no-agent")):
+        assert ld.cmd_bump(_quiet_console(), no_commit=True) == 0
 
 
 # ─── lpb-devstack: repo tagging ───────────────────────────────────────────

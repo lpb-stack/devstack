@@ -1,267 +1,124 @@
-# Thinking Support: Implementation, Validation & Roadmap
+# Thinking Support
 
-> Last updated: 2026-09-07  
-> Status: **Fixed & validated** — all wire fields honored by the current
-> server build (b10818); per-level behavior is covered by the reproducible
+> Last updated: 2026-09-11
+> Status: **Implemented & validated** — all wire fields honored by the current
+> server build (b10865). Per-level behavior is covered by the reproducible
 > benchmark in [Thinking Benchmark](thinking-benchmark.md).
+
+Pi's `/thinking` levels (off | minimal | low | medium | high) control reasoning
+depth on the lemonade-served Qwen models. The stack implements this with 100%
+upstream mechanisms — no pi fork, no server patches — so it survives pi and
+llama.cpp upgrades.
 
 ---
 
-## 1. Architecture: How Thinking Works in This Stack
+## 1. Architecture: How Thinking Works
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│  Pi (pi.dev) — 0.84.3                                            │
+│  Pi (pi.dev) — 0.85.1 (mainstream, from npm)                     │
 │                                                                  │
-│  User selects thinking level: /thinking → low|medium|high|max    │
-│  Pi computes: DEFAULT_THINKING_BUDGETS = {                       │
-│    minimal: 1024,  low: 2048,  medium: 8192,  high: 16384       │
-│  }                                                               │
-│  → per-level budget clamped to leave ≥1024 tokens for answer     │
-│                                                                  │
-│  Sends request to lemonade via openai-completions API:           │
+│  User selects thinking level: /thinking →                        │
+│  off | minimal | low | medium | high                             │
+│  Pi sends (top-level request fields):                            │
 │  {                                                               │
-│    chat_template_kwargs: {                                       │
-│      enable_thinking: true,                                      │
-│      preserve_thinking: true,                                    │
-│      reasoning_effort: "low" │ "medium" │ "high"                │
-│    },                                                            │
-│    thinking_budget_tokens: 2048 │ 8192 │ 14704                  │  ← OUR FIX
-│    max_tokens: 15728   (0.06 × 262k context, clamped 16384)     │
+│    reasoning_effort: "minimal" | "low" | "medium" | "high"       │
+│    thinking_budget_tokens: 2048 | 3072 | 8192 | 16384            │
+│    max_completion_tokens: 16384        (per-model maxTokens)     │
 │  }                                                               │
 └──────────────────────────────┬───────────────────────────────────┘
                                │  HTTP POST /v1/chat/completions
                                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  Lemonade server (llama.cpp b10375)                              │
+│  lemonade-pi-plugin — per-request payload tuning                 │
+│  (per-model catalog: model-params.json, user tier over plugin)   │
 │                                                                  │
-│  • `chat_template_kwargs.enable_thinking` → enables thinking     │
-│    block via Qwen3.6 chat template                               │
-│  • `reasoning_effort` string → IGNORED by llama.cpp (no-op)      │
-│  • `thinking_budget_tokens` → HONORED: hard cap on thinking      │
-│    tokens. When budget reached, llama.cpp inserts </think> tag   │
-│    and transitions to answer generation.                         │
-│  • `reasoning_budget_tokens` → also HONORED (alias/synonym)      │
-│  • `reasoning_budget_tokens: 0` → NO-OP (= unlimited, NOT soft)  │
-│  • `thinking_budget` (top-level) → IGNORED                       │
+│  • P2 budget: min(catalog level, maxTokens − 1024)               │
+│  • effortMap: pi level → reasoning_effort the template accepts   │
+│    (Qwen3.8: minimal→low, high→xhigh)                            │
+│  • P3 sampling row: thinking (on) / nonThinking (off)            │
+│  • P5 off level: offParams { enable_thinking: false }            │
 └──────────────────────────────┬───────────────────────────────────┘
-                               │  Response
+                               │  tuned request
                                ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│  Response body:                                                  │
-│  {                                                               │
-│    choices: [{                                                   │
-│      message: {                                                  │
-│        reasoning_content: " ...thinking text... "                │
-│        content: " ...answer text... "                            │
-│      }                                                           │
-│    }]                                                            │
-│  }                                                               │
+│  Lemonade server (llama.cpp b10865)                              │
+│                                                                  │
+│  • enable_thinking → per-request on/off (honored per-request)    │
+│  • thinking_budget_tokens → hard cap on thinking tokens          │
+│  • reasoning_effort → consumed by the Qwen chat template         │
+│    (names outside its vocabulary are rejected — effortMap        │
+│    exists so the wire always carries an accepted value)          │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-### Key insight: Two separate mechanisms
+## 2. Wire format: what each field does
 
-1. **`enable_thinking`** (via `chat_template_kwargs`) — toggles whether the thinking block is generated. This is what the Pi `qwen-chat-template` format sets.
-2. **`thinking_budget_tokens`** — caps how many tokens the thinking block can be. This is the **only per-level control** that the llama.cpp backend honors.
+| Field | Set by | Server behavior (b10865) |
+|---|---|---|
+| `enable_thinking` (in `chat_template_kwargs`) | Pi `qwen-chat-template` format; plugin `offParams` at the off level | Toggles the thinking block. **Honored per-request** — one server instance serves both thinking and non-thinking modes. |
+| `thinking_budget_tokens` (top-level) | Pi computes a per-level default; the plugin re-clamps it from the per-model catalog (P2) | **Hard cap** on thinking tokens — the only per-level knob that changes how long the model thinks. When reached, the model transitions to the answer. |
+| `reasoning_effort` (top-level) | Pi sends its level; the plugin remaps it via the model's `effortMap` | Consumed by the Qwen chat template. Effort names outside a model's vocabulary are **rejected** by the server, which is why the plugin maintains a per-model mapping instead of passing pi's strings through. |
+| `max_completion_tokens` (top-level) | Per-model `maxTokens` (exact value from the vendor model card) | Total completion ceiling. P2 re-clamps the budget to `maxTokens − 1024` so the answer always has headroom. |
 
-The `reasoning_effort` string sent inside `chat_template_kwargs` is **completely ignored** by llama.cpp. It's only useful for cloud Qwen providers (DashScope, SGLang, vLLM) that have their own parsers.
+At the **off** level the plugin sends no budget and no effort, and adds
+`offParams` (currently `{ enable_thinking: false }`) — the benchmark asserts
+zero reasoning tokens in every off cell.
 
----
+## 3. Why it's implemented this way
 
-## 2. Root Cause: Why Thinking Levels Were Broken
+- **Only upstream mechanisms.** Pi's `qwen-chat-template` thinking format plus
+  the plugin's per-request tuning cover everything — no pi fork patch, no
+  server patch. Upgrading pi or llama.cpp never breaks thinking.
+- **Budget is the control, effort is the hint.** The budget cap produces the
+  measurable per-level difference in thinking depth; `reasoning_effort`
+  shapes *how* the model reasons within that cap. Both are honored; neither
+  alone is sufficient.
+- **Per-model catalog, not code.** Budgets, effort mappings, vendor-recommended
+  sampling rows, and off-level params live in `model-params.json` (user tier
+  overrides plugin tier, edited via `/lemonade tune`). Adding or tuning a model
+  changes data, not code.
+- **Answer headroom guaranteed.** The budget is re-clamped to
+  `maxTokens − 1024`, so thinking can never consume the entire completion
+  window and truncate the answer.
 
-**The symptom:** All three levels (low/medium/high) produced identical, unbounded thinking. The model would fill `max_tokens` with thinking and never produce an answer. Timing differences between levels were pure noise (stochastic thinking length, MTP acceptance variance, prompt-cache state).
+## 4. Current behavior (validated)
 
-**The failure chain (4 broken links):**
+All wire fields above are honored per-request on the current build (b10865),
+validated 2026-09-10 on all three catalogued models via the benchmark:
 
-| Step | What should happen | What actually happened | Status |
-|---|---|---|---|
-| 1 | Plugin sets `thinkingFormat: "qwen-chat-template"` | ✅ Working | Fixed in plugin commit 174b37f |
-| 2 | Plugin sends `reasoning_budget_tokens` via `compat.*` | ❌ Set at top level `model.reasoning_budget_tokens`, harness reads `model.compat.reasoningBudgetTokens` → never sent | **BUG** |
-| 3 | Even if sent, `reasoning_budget_tokens: 0` = unlimited | ❌ `0` means unlimited, NOT "soft cap" (old comment was wrong) | **BUG** |
-| 4 | Harness discards computed budget in `qwen-chat-template` branch | ❌ `thinkingBudget` computed but not used (only used in `chat-template`/`baseten` formats) | **BUG** |
+| Level | Typical outcome | Use for |
+|---|---|---|
+| off | zero thinking tokens (P5) | Lookups, formatting, simple Q&A |
+| minimal / low | short thinking, fast wall time | quick answers, small edits |
+| medium | balanced reasoning (default) | code changes, analysis |
+| high | deep deliberation, longest wall time | multi-step problems, hard debugging |
 
-**Net result:** The request contained an ignored `reasoning_effort` string and NO budget → thinking ran unbounded to `max_tokens` (15728) → answer truncated (`finish=length`, 0 chars).
+Thinking length scales monotonically with the budget and every level produces a
+complete answer (`finish_reason: stop`). The [Thinking Benchmark](thinking-benchmark.md)
+documents the test set, the wire-fidelity assertions, and the per-model
+results that are regenerated with every release tag.
 
----
+## 5. Server-side configuration
 
-## 3. The Fix
+- **Per-request `enable_thinking`** — honored in both directions on all
+  catalogued models (re-validated 2026-09-10). No duplicate server process
+  needed for non-thinking mode.
+- **`--reasoning-budget-message`** — configured on the current server; tells
+  the model to answer once the budget is exhausted (meaningful quality
+  difference vs. raw truncation). Probed live by `lpb-devstack validate`
+  (warning-only).
+- **`--reasoning-format none`** — available workaround if the default
+  (DeepSeek-oriented) reasoning parser mis-handles Qwen's inline XML tags
+  (silent tag stripping, stream corruption). Not enabled; keep in mind for
+  Qwen3.6 reliability issues.
 
-**File:** `lemonade-pi-plugin/lib/models.ts` (uncommitted, lpb-dev branch)  
-**Line:** ~155
+## 6. Open items
 
-```ts
-// Qwen-specific fields for thinking support
-if (isQwen) {
-  result.enable_thinking = true;
-  result.thinkingFormat = "qwen-chat-template";
-  // Per-level thinking budget: pi (v0.84.3+, PR #8275) computes
-  // DEFAULT_THINKING_BUDGETS (low:2048 / medium:8192 / high:16384)
-  // and sends it as a top-level request field named by
-  // compat.thinkingTokenBudgetField, clamped to leave 1024 tokens
-  // for the answer. The llama.cpp backend (Qwen MTP GGUF) honors
-  // `thinking_budget_tokens` (and `reasoning_budget_tokens`) but
-  // IGNORES the `reasoning_effort` string in chat_template_kwargs.
-  result.compat = {
-    ...(result.compat as Record<string, unknown> | undefined),
-    thinkingTokenBudgetField: "thinking_budget_tokens",  // ← THE FIX
-  };
-}
-```
-
-### Why this works
-
-1. **pi's `qwen-chat-template` branch** computes `thinkingBudget` per level (low=2048, medium=8192, high=16384) and passes it to the generic tail.
-2. The generic tail reads `compat.thinkingTokenBudgetField` and sends it as a top-level request field.
-3. Our fix sets this field to `"thinking_budget_tokens"` — the llama.cpp-native parameter name (per pi docs, PR #8275).
-4. The lemonade/llama.cpp server receives `thinking_budget_tokens: <budget>` and uses it to cap the thinking block.
-5. Answer generation proceeds normally after the budget is consumed.
-
-**No fork patch needed.** This uses 100% upstream mechanisms, survives future rebases.
-
----
-
-## 4. Validation Results
-
-### Direct server test (Qwen3.6-35B-A3B-MTP-GGUF)
-
-**Method:** Send raw HTTP requests to the lemonade server with the exact parameters the harness sends post-fix.
-
-**Prompt:** "Find the smallest positive integer that can be expressed as the sum of two positive cubes in exactly two different ways. Show your working."
-
-| Level | Budget sent | Thinking chars | Answer chars | Wall time | finish_reason |
-|---|---|---|---|---|---|
-| low | 2,048 | 4,050 | 1,315 | 32s | `stop` ✅ |
-| medium | 8,192 | 13,754 | 2,596 | 117s | `stop` ✅ |
-| high | 14,704 | 26,059 | 1,687 | 189s | `stop` ✅ |
-
-**Before the fix (for comparison):**
-
-| Level | Budget sent | Thinking chars | Answer chars | finish_reason |
-|---|---|---|---|---|
-| low | (none) | 8,001 | 0 | `length` ❌ |
-| medium | (none) | 8,052 | 0 | `length` ❌ |
-| high | (none) | 7,296 | 0 | `length` ❌ |
-
-**Key observations:**
-- ✅ **Monotonic scaling** — thinking grows ~3× per level step, time scales proportionally
-- ✅ **All levels produce actual answers** — no more truncated responses
-- ✅ **The MoE model is extremely fast** — even high=189s total is reasonable for 26k thinking tokens + answer
-- ✅ **Dense model (Qwen3.8-27B-GGUF)** also honors the budget — tested independently
-
-### Unit tests
-
-`lemonade-pi-plugin/test/model-mapping.test.ts` — 10/10 pass:
-- Qwen MTP models get `compat.thinkingTokenBudgetField: "thinking_budget_tokens"`
-- Non-Qwen models are unchanged
-- FLM developer-role guard is intact
-
----
-
-## 5. Server Version Analysis
-
-Current server build: **b10818** (live-verified 2026-09-05/06). The b10375
-table below is historical; the live behavior matrix for b10818 is in the
-[benchmark doc](thinking-benchmark.md) and the validate probes.
-
-### ✅ Included since b10375
-
-### ✅ Already included in b10375
-
-| Feature | PR | Version | Status |
-|---|---|---|---|
-| Qwen3 specialized PEG parser | #26252 | b10227 (Aug 2, 2026) | ✅ Included |
-| Multi-block budget re-arm | #22323 | b9211 (Apr 24, 2026) | ✅ Included |
-| Prompt tokens not passed to budget sampler | #22488 | b10000 (May 2026) | ✅ Included |
-| `--reasoning-budget-message` flag | #20297 | pre-b10227 | ✅ Available |
-| `--no-prefill-assistant` flag | pre-existing | pre-b10227 | ✅ Available |
-
-### 🔧 Still needs attention
-
-| Feature | Status | Action | Priority |
-|---|---|---|---|
-| **Per-request reasoning toggle** | ✅ WORKS on b10818 — top-level `enable_thinking` honored per-request (validated 2026-09-05/06, all catalogued models) | — | ~~P0~~ done |
-| **Configure `--reasoning-budget-message`** | ✅ Configured on the current server; probed live by `lpb-devstack validate` (warning-only) | — | ~~P1~~ done |
-| **`--reasoning-format none`** workaround | Available | Consider for Qwen3.6 reliability | P2 |
-
----
-
-## 6. Implementation Recommendations
-
-### P0: Per-request reasoning toggle (highest impact) — RESOLVED
-
-> ✅ Resolved on the current build (b10818, validated 2026-09-05/06):
-> top-level `enable_thinking: false` is honored per-request in both
-> directions on all catalogued Qwen models — zero reasoning in every off
-> cell of the benchmark. PR #22336 tracking no longer blocking. The original
-> problem statement is kept for history.
-
-**What's upstream:** PR #22336 adds a first-class per-request `reasoning` boolean field to the OpenAI-compatible API. This would let a single server instance serve both modes.
-
-**Action:**
-1. Track PR #22336 status
-2. When merged, implement the field in lemonade's `/v1/chat/completions` handler
-3. Map the per-request `reasoning` boolean to the appropriate llama.cpp flag
-
-**Impact:** Critical for hybrid models. Eliminates the need for duplicate server processes.
-
-### P1: Configure `--reasoning-budget-message` (easy, 10% quality boost) — DONE
-
-> ✅ Configured on the current server (2026-09-06) and covered by a live
-> validate probe. Note: Qwen3.8 emits the exhaustion marker; Qwen3.6
-> truncates reasoning without the note (model quirk, not a config error).
-
-<details><summary>Original recommendation (historical)</summary>
-
-**What it does:** When the thinking budget is exhausted, llama.cpp appends a custom message (e.g., "...reasoning budget exceeded, need to answer") to tell the model to transition to answering. Without this, model quality drops ~10%.
-
-**Implementation (in llama.cpp server config):**
-```bash
-llama-server \
-  --reasoning-budget-message "You have exceeded your reasoning budget. Provide a concise answer now."
-```
-
-Or configure via lemonade's server startup parameters.
-
-**Impact:** +10% answer quality at all thinking levels. No client changes needed.
-
-</details>
-
-### P2: Consider `--reasoning-format none` for Qwen3.6
-
-**The problem:** llama.cpp's default reasoning parser (designed for DeepSeek's output format) has reliability issues with Qwen3's inline XML tags (` \n ...  \n\n`). This causes:
-- Silent tag stripping from output
-- Reasoning/answer field confusion
-- Corrupted streaming responses
-
-**The workaround:** Start the server with `--reasoning-format none` and parse the output client-side:
-```bash
-llama-server \
-  --reasoning-format none
-```
-
-Then extract thinking text with regex:
-```python
-pattern = r' \n(.*?)\n\n'
-thinking, answer = split_thinking(raw_text)
-```
-
-**Impact:** Eliminates silent corruption. Trade-off: client-side parsing complexity.
-
----
-
-## 7. Why This Matters
-
-Thinking support is **one of the core reasons** this plugin exists. The LocalPibox stack is built around Qwen3.6 reasoning models, and the thinking levels are the primary mechanism for controlling model behavior across different task types:
-
-- **Low thinking** — fast, concise responses for simple queries (32s)
-- **Medium thinking** — balanced reasoning for code and analysis (117s)
-- **High thinking** — deep deliberation for complex multi-step problems (189s)
-
-Before the fix, all three levels were indistinguishable — the model would always think for as long as possible and never produce an answer. The fix restores the intended per-level control, making the model actually useful across different task complexity levels.
-
-The per-request reasoning toggle (upstream PR #22336) would further improve this by enabling a single server to serve both thinking and non-thinking modes — critical for hybrid models where some tasks need reasoning (code generation, analysis) and others don't (lookup, formatting, simple Q&A).
+| Item | Status |
+|---|---|
+| Upstream PR #22336 — first-class per-request `reasoning` boolean in the OpenAI API | Tracking; would make the `enable_thinking` keyword extra first-class. Not blocking — per-request `enable_thinking` already works. |
+| `--reasoning-format none` | Consider enabling for Qwen3.6 if parser-related corruption appears. Trade-off: client-side thinking/answer splitting. |
 
 ---
 
@@ -269,22 +126,10 @@ The per-request reasoning toggle (upstream PR #22336) would further improve this
 
 | Item | Value |
 |---|---|
-| pi version | 0.84.3 |
-| pi PR for budget field | #8275 |
-| pi field name for llama.cpp | `"thinking_budget_tokens"` |
-| llama.cpp build | b10818 (current, live-verified) |
-| Model tested | Qwen3.6-35B-A3B-MTP-GGUF |
-| Server URL | http://192.168.0.13:13305 |
-| DEFAULT_THINKING_BUDGETS | {minimal:1024, low:2048, medium:8192, high:16384} |
-| MIN_ANSWER_TOKENS | 1024 |
-| Qwen MTP maxTokens | 15728 (0.06 × 262k, clamped 16384) |
-
----
-
-## 7. Benchmark & regression validation
-
-Per-level behavior (budgets, effort mapping, off-switch, quality per level)
-is validated by the reproducible benchmark — see
-[Thinking Benchmark](thinking-benchmark.md): test set (GSM8K/MATH-derived),
-wire-fidelity assertions, procedure, and per-model results that get
-regenerated with every release tag.
+| pi version | 0.85.1 (mainstream, installed from npm at `LPB_PI_VERSION`) |
+| llama.cpp build | b10865 (live-verified 2026-09-10) |
+| Pi default budgets (fallback) | minimal: 1024, low: 2048, medium: 8192, high: 16384 |
+| Budget re-clamp | `min(catalog level, maxTokens − 1024)` |
+| maxTokens | exact per-model value from the vendor model card (Qwen: 16384) |
+| Per-model catalog | `lemonade-pi-plugin/lib/model-params.json` (user tier in `~/.pi/agent`) |
+| Tuning | `/lemonade tune` in Pi |

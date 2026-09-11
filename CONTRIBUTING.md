@@ -20,7 +20,7 @@ has its own scope:
 | [config](https://github.com/lpb-stack/config) | Pi settings, MCP servers, custom skills, subagents presets |
 | [pi](https://github.com/earendil-works/pi) | Upstream of the coding agent core — installed from npm at `LPB_PI_VERSION`, not a stack repo since the 2026-08-31 de-fork; patches go upstream |
 | [lemonade-pi-plugin](https://github.com/lpb-stack/lemonade-pi-plugin) | Qwen thinking + vision support (fork) |
-| [pi-subagents](https://github.com/lpb-stack/pi-subagents) | Centralized subagent model registry (fork) |
+| [pi-subagents](https://github.com/tintinweb/pi-subagents) | Upstream of the subagent model registry — installed from npm, not a stack repo since the 2026-09-10 de-fork |
 | [lpb-memory](https://github.com/lpb-stack/lpb-memory) | Persistent memory / session search extension |
 
 ### Process

@@ -21,9 +21,11 @@ from .repos import (
     CONFIG_REPO,
     DEFAULT_AGENT_DIR,
     LPB_EXTENSION_REPOS,
+    UPSTREAM_REMOTES,
     WORKSPACE_REPOS,
     WORKSPACE_ROOT,
     _repo_remote,
+    git_extension_pin,
 )
 from .version import expected_branch, expected_pin_version, get_version
 
@@ -98,6 +100,36 @@ def _ensure_branch_tracked(repo_path: Path, branch: str) -> bool:
     if git(repo_path, "rev-parse", "--verify", f"refs/remotes/origin/{branch}")[2] == 0:
         git(repo_path, "branch", "--set-upstream-to", f"origin/{branch}", branch)
     return True
+
+
+def _ensure_upstream_remote(name: str, path: Path, cons: Console) -> None:
+    """Ensure a forked repo tracks its upstream project (remote 'upstream').
+
+    Applies to repos in UPSTREAM_REMOTES (the others have no upstream and
+    are no-ops). Adds the remote when missing, repairs it when the URL
+    drifted, then fetches so upstream refs/tags are current. Failures are
+    non-fatal — upstream visibility is a convenience, not pipeline
+    alignment.
+    """
+    url = UPSTREAM_REMOTES.get(name)
+    if not url:
+        return
+    cur, _, code = git(path, "remote", "get-url", "upstream")
+    if code != 0:
+        out, err, code = git(path, "remote", "add", "upstream", url)
+        if code != 0:
+            cons.warn(f"  {name}: could not add upstream remote ({err.strip()[:80]})")
+            return
+        cons.info(f"  {name}: upstream remote added ({url})")
+    elif cur.strip() != url:
+        out, err, code = git(path, "remote", "set-url", "upstream", url)
+        if code != 0:
+            cons.warn(f"  {name}: could not set upstream URL ({err.strip()[:80]})")
+            return
+        cons.info(f"  {name}: upstream remote {cur.strip()} → {url}")
+    out, err, code = git_auth(path, "fetch", "--prune", "upstream", timeout=180)
+    if code != 0:
+        cons.warn(f"  {name}: upstream fetch failed ({(err or out).strip()[:80]})")
 
 
 def _is_dirty(path: Path) -> bool:
@@ -367,6 +399,7 @@ def cmd_workspace_sync(pipeline: str, cons: Console) -> int:
                 continue
             _ensure_counterpart_branch(
                 name, ext_path, pipeline, dev_branch, main_branch, cons)
+            _ensure_upstream_remote(name, ext_path, cons)
             continue
 
         # Real repos live in the workspace root
@@ -382,6 +415,7 @@ def cmd_workspace_sync(pipeline: str, cons: Console) -> int:
         else:
             _ensure_counterpart_branch(
                 name, path, pipeline, dev_branch, main_branch, cons)
+            _ensure_upstream_remote(name, path, cons)
 
     # Config repo (the agent dir itself)
     if not _sync_config(pipeline, cons):
@@ -419,20 +453,24 @@ def _write_settings(agent_dir: str | Path, settings: dict) -> None:
 
 
 def _get_pinned_versions(settings: dict) -> dict[str, str]:
-    """Extract version pins for LPB extension repos from settings."""
+    """Extract version pins for the git-managed LPB extension repos.
+
+    npm/bare packages are NOT version-managed and are not returned — pi
+    manages their versions via `pi update --extensions`.
+    """
     pins: dict[str, str] = {}
     for pkg in settings.get("packages", []):
-        if not isinstance(pkg, str):
-            continue
-        for name in LPB_EXTENSION_REPOS:
-            marker = f"lpb-stack/{name}@"
-            if marker in pkg:
-                pins[name] = pkg.split("@")[-1]
+        name = git_extension_pin(pkg)
+        if name:
+            pins[name] = pkg.split("@")[-1]
     return pins
 
 
 def _update_pinned_versions(settings: dict, target_version: str) -> list[tuple[str, str, str]]:
-    """Update LPB extension pins to target_version. Returns list of changes."""
+    """Update git-managed LPB extension pins to target_version. Returns changes.
+
+    npm/bare packages are left untouched — not managed by the stack VERSION.
+    """
     packages = settings.get("packages", [])
     changes: list[tuple[str, str, str]] = []
     for name in LPB_EXTENSION_REPOS:
@@ -449,6 +487,27 @@ def _update_pinned_versions(settings: dict, target_version: str) -> list[tuple[s
 
 
 # ─── Workspace: sync extension pins ───────────────────────────────────────
+
+def sync_pins_quiet(agent_dir: str | Path, target_version: str,
+                    cons: Console) -> int:
+    """Non-interactive pin update: write pins != *target_version* in
+    settings.json. Returns the number of changed extension(s); 0 if nothing
+    to do or no settings.json (a missing file is not an error here —
+    callers treat it as 'nothing to sync'). Used by `lpb-devstack bump`
+    so a VERSION commit never lands with stale pins (the pre-commit
+    validate would fail, and a post-hook sync would target the OLD
+    version)."""
+    settings = _read_settings(agent_dir)
+    if settings is None:
+        return 0
+    changed = _update_pinned_versions(settings, target_version)
+    if not changed:
+        return 0
+    _write_settings(agent_dir, settings)
+    for name, old, new in changed:
+        cons.info(f"  pin {name}: {old} → {new}")
+    return len(changed)
+
 
 def cmd_workspace_sync_pins(pipeline: str, cons: Console) -> int:
     """Sync settings.json extension pins to the pipeline's stack version."""
@@ -469,12 +528,17 @@ def cmd_workspace_sync_pins(pipeline: str, cons: Console) -> int:
     cons.info(f"Target pins:  {target_version}")
     cons.info("")
 
-    # Check mismatches
+    # Check mismatches (git-managed extension repos only)
     mismatches = []
     for name in LPB_EXTENSION_REPOS:
         cur = current_pins.get(name, "(unpinned)")
         if cur != target_version:
             mismatches.append((name, cur, target_version))
+
+    # npm/bare packages: presence-only, not managed by the stack VERSION
+    for pkg in settings.get("packages", []):
+        if isinstance(pkg, str) and not git_extension_pin(pkg):
+            cons.info(f"  {pkg}: npm (not managed by the stack VERSION)")
 
     if not mismatches:
         cons.info("All extension pins already match LPB_VERSION.")

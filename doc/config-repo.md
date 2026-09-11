@@ -58,8 +58,10 @@ The settings file is **template-driven**, not git-tracked:
 
 ### Example pin format
 
-Extensions are pinned in the `packages` array of `settings.json` as
-`git:<owner>/<repo>@<stack-tag>` strings:
+Extensions are pinned in the `packages` array of `settings.json`. Git forks
+use `git:<owner>/<repo>@<stack-tag>` (version-tracked by the stack); npm
+packages use a bare `npm:<pkg>` specifier with **no version** so pi can
+update them via `pi update --extensions`:
 
 ```json
 {
@@ -67,7 +69,7 @@ Extensions are pinned in the `packages` array of `settings.json` as
     "git:github.com/lpb-stack/lemonade-pi-plugin@0.0.N-lpb-dev",
     "git:github.com/lpb-stack/lpb-memory@0.0.N-lpb-dev",
     "npm:pi-mcp-adapter",
-    "git:github.com/lpb-stack/pi-subagents@0.0.N-lpb-dev",
+    "npm:@tintinweb/pi-subagents",
     "npm:pi-powerline-footer",
     "@upstash/context7-mcp"
   ]
@@ -104,8 +106,10 @@ runtime via `pi update --extensions`.
 | Directory | Repo | Role |
 |---|---|---|
 | `lpb-memory/` | `lpb-stack/lpb-memory` | Persistent memory extension |
-| `pi-subagents/` | `lpb-stack/pi-subagents` | Subagent model registry |
 | `lemonade-pi-plugin/` | `lpb-stack/lemonade-pi-plugin` | Lemonade provider plugin |
+
+`pi-subagents` is not here — it de-forked to the upstream npm package
+(installed by pi from the npm registry, not a git clone under `git/`).
 
 ## Runtime State: lpb-memory Dir
 

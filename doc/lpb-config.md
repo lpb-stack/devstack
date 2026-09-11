@@ -79,7 +79,9 @@ Settings.json is **template-driven**, not git-tracked:
 5. `lpb-devstack validate` checks pins match the current stack version
 6. Settings.json persists on the host volume — survives container rebuilds
 
-Example pin: `git:github.com/lpb-stack/pi-subagents@0.0.N-lpb-dev`
+Example pins:
+- Fork extension (stack-versioned): `git:github.com/lpb-stack/lpb-memory@0.0.N-lpb-dev`
+- Upstream npm (no version pin — pi updates it via `pi update --extensions`): `npm:@tintinweb/pi-subagents`
 
 ## lpb-memory Config Lifecycle
 

@@ -19,7 +19,7 @@ LocalPibox originals.
    point at your forks:
 
    ```sh
-   export LPB_PI_VERSION=0.84.4            # mainstream pi from npm (pin a different release)
+   export LPB_PI_VERSION=0.85.1            # mainstream pi from npm (pin a different release)
    export LPB_CONFIG_FORK=https://github.com/<you>/config.git
    export LPB_CONFIG_REF=main             # your branch
    export LPB_IMAGE_CLI=ghcr.io/<you>/devstack:dev-cli
