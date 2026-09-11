@@ -73,6 +73,7 @@ from localpibox.stack.workspace import (  # noqa: E402
     _resolve_repo_path,
     cmd_workspace_status,
     cmd_workspace_sync,
+    sync_pins_quiet,
 )
 from localpibox.stack.validate import cmd_validate  # noqa: E402
 from localpibox.stack.release import (  # noqa: E402
@@ -129,6 +130,17 @@ def cmd_bump(cons: Console, *, minor: bool = False, major: bool = False,
 
     vf.write_text(new + "\n")
     cons.info(f"VERSION: {current} → {new}")
+
+    # Keep settings.json pins in lockstep with the new VERSION, BEFORE the
+    # commit: the pre-commit validate checks pins == VERSION, and syncing
+    # after the hook would target the OLD version (the hook runs before the
+    # bump lands). Without this, the first dev bump after a stable release
+    # (pins still at the stable tag) fails its own gate.
+    from localpibox.stack.repos import DEFAULT_AGENT_DIR as _agent_dir
+    n = sync_pins_quiet(_agent_dir, new, cons)
+    if n:
+        cons.info(f"Synced {n} extension pin(s) to {new} "
+                  f"(run 'pi update --extensions' after the tags exist)")
 
     if no_commit:
         cons.info("--no-commit: file written, not committed (review + commit manually)")

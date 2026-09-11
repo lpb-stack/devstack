@@ -208,7 +208,7 @@ def test_wizard_noninteractive_success(tmpdir):
     assert settings["theme"] == "dark"                        # user key preserved
     mem = json.loads((agent / "lpb-memory-config.json").read_text())
     assert mem["llmModelOverride"] == "qwen3.5-9b-FLM"
-    assert mem["llmThinkingOverride"] == "low"
+    assert mem["llmThinkingOverride"] == "off"
     assert (agent / ".git").is_dir()                          # repo cloned by wizard
     print("  PASS\n")
 

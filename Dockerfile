@@ -29,7 +29,7 @@
 # NOTE: Docker ARG values can't reference source'd shell variables.
 ARG NODE_VERSION=24
 ARG VSCODIUM_VERSION=1.126.04524
-ARG PI_VERSION=0.84.4
+ARG PI_VERSION=0.85.1
 ARG PI_HEAD_SHA=unknown
 
 # Config preset repo — baked so start.sh clones the fork's config at boot.
@@ -51,7 +51,7 @@ FROM ubuntu:26.04 AS base
 
 ARG NODE_VERSION
 ARG VSCODIUM_VERSION
-ARG PI_VERSION=0.84.4
+ARG PI_VERSION=0.85.1
 ARG PI_HEAD_SHA
 ARG CONFIG_FORK
 ARG CONFIG_REF

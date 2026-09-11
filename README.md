@@ -6,6 +6,26 @@ optimized for Qwen models served locally through **Lemonade**, targeting
 AMD Strix Halo hardware. No cloud LLM required; your code and data stay
 on your machine.
 
+## What You Get
+
+Everything below ships in the base image — no extra setup beyond the
+[Quick Start](#quick-start).
+
+| Capability | What it means in practice |
+|---|---|
+| **Local inference, zero cloud** | All model calls go to the local Lemonade server (GGUF models, AMD Strix Halo optimized). Your code, data, and prompts never leave the machine. |
+| **Full coding agent** | Pi — foreground CLI, interactive shell, SSH login, or web; sessions, session tree, skills, prompt templates, themes. |
+| **Controlled thinking depth** | `/thinking` levels (off → high) with per-level budgets and per-model effort mapping; per-model parameters tunable live via `/lemonade tune` — [Thinking Support](doc/thinking-support.md) |
+| **Vision** | Screenshots and visual page analysis by the local vision model — the agent can see webpages, UIs, and render output. |
+| **Persistent memory** | `lpb-memory` — durable memory plus cross-session conversation search; subagent and review results land back into it. |
+| **Subagents & orchestration** | Local-first subagent registry (subagents inherit your session model — no cloud defaults), parallel delegation, and workflow scripting. |
+| **Browser automation** | agent-browser + Chrome for Testing — navigation, form interaction, screenshots, vitals, accessibility checks, structured validation reports. |
+| **Web research** | Exa MCP (search + content fetch) and Context7 (version-specific library docs) as on-demand tools for the agent. |
+| **Web editor** | VSCodium over the OpenVSCode protocol — edit in any browser, token printed per launch (or pinned via `.env`). |
+| **Guided setup & health** | Interactive setup wizard on first run (server, key, model, MCP, memory) and `lpb doctor` / `lpb-config check` read-only validation, any time. |
+| **Multi-project & persistent** | One container per project; agent state, sessions, and memory survive image rebuilds; `lpb --update` self-updates launcher + image. |
+| **Reproducible releases** | Manual versioning, stable tags, a versioned docs site — every capability above is documented at its release version. |
+
 ## Quick Start
 
 ### 1. Install the launcher (once)
@@ -73,7 +93,7 @@ lpb --help       # full usage
 | **VSCodium** | Web-based editor (`:web` image), connects over the OpenVSCode protocol |
 | **lemonade-pi-plugin** (forked) | Model provider for the local **Lemonade** server — Qwen thinking + vision support |
 | **lpb-memory** | Persistent memory + session search for the agent |
-| **pi-subagents** (forked) | Local-first subagent model registry (no hardcoded cloud models) |
+| **pi-subagents** | Subagent model registry — upstream `tintinweb/pi-subagents` installed via npm (no hardcoded cloud models) |
 | **agent-browser** + Chrome | Browser automation tools for the agent |
 | **MCP servers** | Exa (web search), Context7 (library docs), agent-browser |
 | **Lemonade** (host prerequisite) | Local model server — AMD/Strix Halo-optimized, serves GGUF models; on this host or any reachable host; model chosen by the user at setup (no default) |
@@ -199,9 +219,10 @@ flowchart TB
 
 ## Forked Repos & Upstream Policy
 
-Pi itself is no longer a fork: the image installs mainstream pi from the
-npm registry at `LPB_PI_VERSION` (the `lpb-stack/pi` fork is retired — see
-[Fork improvements](doc/fork-improvements.md) for the retirement note).
+Pi itself is not a repo: the image installs mainstream pi from the npm
+registry at `LPB_PI_VERSION`. The only fork is `lemonade-pi-plugin`; retired
+forks and the full repo map are in
+[Repositories & Customizations](doc/fork-improvements.md).
 
 The remaining fork URLs and branches are tracked in `lpb.stack.env` at the
 repo root. Each fork keeps its LocalPibox work as clean commits on top of
@@ -211,7 +232,7 @@ patch.
 | Repo | Upstream | LocalPibox work | Update policy |
 |---|---|---|---|
 | **lemonade-pi-plugin** | `lemonade-sdk/lemonade-pi-plugin` (no stable release) | Qwen thinking + vision support | follow upstream `main`, check periodically |
-| **pi-subagents** | `tintinweb/pi-subagents` (v0.16.1) | centralized local-first subagent model registry | follow upstream; merge + repair as needed |
+| **pi-subagents** | `tintinweb/pi-subagents` (upstream, npm) | installed from upstream npm — no local fork; subagent model registry | track upstream releases |
 | **lpb-memory** | *(independent project)* | Pi memory extension (subprocess reviews) | no upstream to track |
 | **config** / **devstack** | — | own | own |
 
@@ -238,7 +259,7 @@ GitHub Actions (`.github/workflows/build-and-publish.yml`) runs on:
 Versioning is **manual**: `lpb-devstack bump` commits a new `VERSION`, and CI
 builds + tags only when VERSION changed in the pushed commit. Pipeline jobs:
 **VERSION check** → **test** (always) → **build & publish images** →
-**tag repos** (CI tags the other 4 stack repos on their pipeline branches) →
+**tag repos** (CI tags the other 3 stack repos on their pipeline branches) →
 **docs publish** (main pipeline only — publishes the stable docs version,
 gated on the docs being flagged ready via `lpb-devstack release docs-ready`
 before promotion) → **status**. Devstack itself is tracked by its `VERSION`
@@ -315,5 +336,5 @@ devstack/
 - [lpb-stack/pi](https://github.com/lpb-stack/pi) — retired pi fork (reference only; last state `pre-defork-0.0.71`)
 - [lpb-stack/config](https://github.com/lpb-stack/config) — agent config preset
 - [lpb-stack/lemonade-pi-plugin](https://github.com/lpb-stack/lemonade-pi-plugin) — Lemonade provider plugin
-- [lpb-stack/pi-subagents](https://github.com/lpb-stack/pi-subagents) — subagent model registry
+- [tintinweb/pi-subagents](https://github.com/tintinweb/pi-subagents) — subagent model registry (upstream, installed via npm; the `lpb-stack/pi-subagents` fork is retired)
 - [lpb-stack/lpb-memory](https://github.com/lpb-stack/lpb-memory) — persistent memory extension

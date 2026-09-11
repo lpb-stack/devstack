@@ -87,11 +87,10 @@ def test_validate_extensions(tmpdir):
     (ext / "github.com" / "lpb-stack" / "lemonade-pi-plugin" / "package.json").touch()
     (ext / "github.com" / "lpb-stack" / "lpb-memory" / "package.json").parent.mkdir(parents=True)
     (ext / "github.com" / "lpb-stack" / "lpb-memory" / "package.json").touch()
-    (ext / "github.com" / "lpb-stack" / "pi-subagents" / "package.json").parent.mkdir(parents=True)
-    (ext / "github.com" / "lpb-stack" / "pi-subagents" / "package.json").touch()
+    # pi-subagents is an npm extension (not a git clone) — not checked here.
     with mock.patch.object(validate, "EXT_BASE", ext):
         validate.check_extensions(c, cons)
-    assert c.errors == 0 and c.checks == 3
+    assert c.errors == 0 and c.checks == 2
 
 
 def test_validate_pi_cli_missing(tmpdir):

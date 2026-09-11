@@ -238,6 +238,66 @@ def test_lpb_config_sync_missing_counterpart_is_not_an_error(tmpdir):
     assert "main" not in _local_branches(clone)
 
 
+def test_lpb_config_sync_adds_upstream_remote(tmpdir):
+    """Forked repo (UPSTREAM_REMOTES) → sync adds 'upstream' remote and fetches it."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    _push_branch(src, "dev")
+    up_remote, _ = _bare_remote(tmpdir, "upstream-a", "master")
+    with mock.patch.object(ws_mod, "UPSTREAM_REMOTES", {"repo-a": str(up_remote)}), \
+         _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    url = subprocess.run(
+        ["git", "-C", str(clone), "remote", "get-url", "upstream"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert url == str(up_remote)
+    subprocess.run(
+        ["git", "-C", str(clone), "rev-parse", "--verify",
+         "refs/remotes/upstream/master"],
+        check=True, capture_output=True,
+    )
+
+
+def test_lpb_config_sync_repairs_upstream_url(tmpdir):
+    """Stale 'upstream' URL → sync repairs it to the canonical one."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    subprocess.run(
+        ["git", "-C", str(clone), "remote", "add", "upstream",
+         "https://example.invalid/old.git"],
+        check=True,
+    )
+    up_remote, _ = _bare_remote(tmpdir, "upstream-a", "master")
+    with mock.patch.object(ws_mod, "UPSTREAM_REMOTES", {"repo-a": str(up_remote)}), \
+         _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    url = subprocess.run(
+        ["git", "-C", str(clone), "remote", "get-url", "upstream"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert url == str(up_remote)
+
+
+def test_lpb_config_sync_upstream_failure_is_nonfatal(tmpdir):
+    """Unreachable upstream (dead URL) → warned, sync still succeeds."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    _push_branch(src, "dev")
+    with mock.patch.object(
+        ws_mod, "UPSTREAM_REMOTES",
+        {"repo-a": str(tmpdir / "remotes" / "does-not-exist.git")},
+    ), _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    assert _branch(clone) == "dev"
+
+
 def main() -> int:
     return run_lpbx_suite("lpb-config workspace sync tests", globals())
 

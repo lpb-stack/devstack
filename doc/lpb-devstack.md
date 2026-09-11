@@ -64,7 +64,7 @@ partially-tagged stack is a release bug.
 
 | Command | Description |
 |---|---|
-| `lpb-devstack release status` | Pre-flight check: all 5 repos + docs flag, non-destructive |
+| `lpb-devstack release status` | Pre-flight check: all tagged repos + docs flag, non-destructive |
 | `lpb-devstack release docs-ready [--yes]` | Flag the docs branch as reviewed for the next stable release |
 | `lpb-devstack release promote --dry-run` | Inspect plan without making changes |
 | `lpb-devstack release promote` | Promote dev → main (interactive confirmation, blocked until docs are ready) |

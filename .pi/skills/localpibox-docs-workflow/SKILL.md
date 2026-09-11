@@ -33,7 +33,7 @@ from `gh-pages` at `https://lpb-stack.github.io/devstack/<version>/`).
 
 **Branch facts** (for "branch off X / PR to X" lines in CONTRIBUTING files):
 default branch is `dev` for devstack/config/lpb-memory, `lpb-dev` for the
-forks (pi, pi-subagents, lemonade-pi-plugin). `main`/`lpb` are stable
+lemonade-pi-plugin fork. `main`/`lpb` are stable
 branches written by `lpb-devstack release promote` — not PR targets.
 
 ## GitHub-Compatible Mermaid
