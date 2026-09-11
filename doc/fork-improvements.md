@@ -1,16 +1,12 @@
-# LocalPibox Fork Improvements
+# LocalPibox Stack: Repositories & Customizations
 
-> Last updated: 2026-09-03
-> Status: de-forked (2026-08-31) — mainstream pi from npm; Qwen thinking via
-> lemonade-pi-plugin with per-model `maxTokens` ceilings
+> Last updated: 2026-09-11
+> Stack: mainstream pi from npm + 4 repos under `github.com/lpb-stack`;
+> the only fork is `lemonade-pi-plugin`.
 
 ---
 
 ## Repository Map
-
-This stack uses 4 repositories under `github.com/lpb-stack`. One is a fork
-of an upstream repo; pi and pi-subagents are no longer stack repos (de-forked
-2026-08-31 and 2026-09-10 respectively — see the retired-fork notes below):
 
 | Repo | Type | Upstream | Purpose |
 |---|---|---|---|
@@ -19,40 +15,33 @@ of an upstream repo; pi and pi-subagents are no longer stack repos (de-forked
 | **`lpb-stack/devstack`** | Original | — | Docker dev environment + lpb launcher |
 | **`lpb-stack/lpb-memory`** | Original | — | Persistent memory extension |
 
-Pi (the coding agent itself) is installed from the npm registry at
-`LPB_PI_VERSION` (`@earendil-works/pi-coding-agent`) — no repo, no fork.
+**Pi itself is not a repo.** It is installed from the npm registry at
+`LPB_PI_VERSION` (`@earendil-works/pi-coding-agent`). The subagent registry
+(`@tintinweb/pi-subagents`) is likewise installed from upstream npm — version
+tracked in `settings.json`.
 
-## The Pi Fork (`lpb-stack/pi`) — retired 2026-08-31
+> ⚠️ Two earlier forks (`lpb-stack/pi`, `lpb-stack/pi-subagents`) were retired
+> in 2026 when upstream absorbed what they provided. A local `workspace/pi`
+> reference clone may remain at the retired tag — it is not built or used.
+> Re-introducing a forked pi is only needed for changes upstream hasn't picked
+> up; see `doc/forking.md` for the procedure.
 
-The `lpb-stack/pi` fork (based on `earendil-works/pi`, last state: tag
-`pre-defork-0.0.71`) is **retired**. It was based on v0.84.3 with 8 lbp
-commits adding Qwen/Lemonade support: the `reasoning_effort` →
-`chat_template_kwargs` mapping, a `reasoning_budget_tokens` soft cap, Case 4
-reasoning overflow detection, `allowScripts` declarations for native addons,
-and fork versioning. Upstream pi has since picked up `reasoning_effort`
-natively, which made the fork unnecessary.
+## Why only one fork
 
-| Fork change | Where it lives now |
-|---|---|
-| `reasoning_effort` support for Qwen | Mainstream pi ≥0.84.4 sends it natively; the plugin handles the `enable_thinking` protocol |
-| `reasoning_budget_tokens` soft cap | Replaced by per-model `maxTokens` ceilings in the plugin's model-params catalog |
-| Case 4 overflow detection | Replaced by raised `reserveTokens` (early compaction) + per-model ceilings |
-| `allowScripts` for native addons | Re-implemented by devstack: `npm config set allow-scripts …` (start.sh) + `.npmrc` (Dockerfile) |
-| `LOCALPIB_VERSION` env read | Replaced by the `LPB_VERSION` banner baked by the Dockerfile |
-| Last patch (Case 4 overflow) | Kept as `patches/pi-case4-overflow.patch` for reference |
-
-Re-introducing a forked pi is only needed for changes upstream hasn't
-picked up — see `doc/forking.md` for the procedure. A local `workspace/pi`
-reference clone may remain at the retired tag.
-
----
+The stack's rule: keep LocalPibox changes as **clean commits on top of upstream
+tags** — the delta is always visible as the diff between upstream and the
+`lpb-dev` branch. Forks are introduced only when upstream cannot cover a need,
+and retired as soon as upstream catches up. Today that leaves exactly one fork:
+the lemonade-pi-plugin, which carries the Qwen-on-Lemonade protocol that no
+upstream project owns.
 
 ## Lemonade Pi Plugin (`lpb-stack/lemonade-pi-plugin`)
 
-Forked from `lemonade-sdk/lemonade-pi-plugin`. Adds +334 lines across 13 files
-to support Qwen reasoning models on the Lemonade local provider.
+Fork of `lemonade-sdk/lemonade-pi-plugin`, adding Qwen reasoning support,
+vision detection, and a per-model parameter catalog for the Lemonade local
+provider.
 
-### Qwen Reasoning Model Support
+### Qwen reasoning model support
 
 | Feature | Implementation |
 |---|---|
@@ -60,63 +49,56 @@ to support Qwen reasoning models on the Lemonade local provider.
 | **MTP detection** | `isMtpModel()` — detects Multi-Token Prediction models |
 | **FLM detection** | `flmTemplateRejectsDeveloperRole()` — disables reasoning for FLM backends |
 | **Dynamic maxTokens** | Per-model `maxTokens` in the model-params catalog — prevents context overflow (see Configuration below) |
-| **Thinking protocol** | Adds `enable_thinking`, `reasoning_budget_tokens`, `thinkingFormat: "qwen-chat-template"` |
+| **Thinking protocol** | Adds `enable_thinking`, budget fields, `thinkingFormat: "qwen-chat-template"`; per-request payload tuning (P2 budgets, effortMap, P3 sampling, P5 off params) — see `doc/thinking-support.md` |
 | **Heuristic detection** | `isReasoningByHeuristic()` — catches models without `recipe` field |
 
-### Vision Capability
+### Vision capability
 
 | Feature | Implementation |
 |---|---|
 | **Label-based detection** | `detectVision()` — checks for `"vision"` in model labels |
 | **Auto image input** | Vision models auto-get `input: ["text", "image"]` |
 
-### Sync Model Store
+### Sync model store
 
-Keeps `~/.pi/agent/models-store.json` in sync with the Lemonade API. Subprocesses
-and subagents resolve models with correct `contextWindow` and `maxTokens` without
-network calls. Triggered on login, refresh, and `/lemonade change-ctx`.
+Keeps `~/.pi/agent/models-store.json` in sync with the Lemonade API.
+Subprocesses and subagents resolve models with correct `contextWindow` and
+`maxTokens` without network calls. Triggered on login, refresh, and
+`/lemonade change-ctx`.
 
 ### Configuration
 
-The response ceiling (`max_completion_tokens`) is the **per-model
-`maxTokens` catalog field** in the lemonade-pi-plugin model-params catalog
-(`~/.pi/agent/model-params.json` + the plugin-shipped tier) — an exact token
-value per wire model id, applied at model sync. The former ctx-ratio design
-(`DEFAULT_MAX_TOKENS_CONTEXT_RATIO` 0.125, `QWEN_REASONING_MAX_TOKENS_CONTEXT_RATIO`
-0.06, the 16384 clamp, and the `LPB_MAX_TOKENS_CONTEXT_RATIO` env chain)
-was retired 2026-09-02: the plugin's env read was dead (set by nothing), the
-protective work was done by the clamp anyway, and six explicit numbers are
-more auditable than a formula.
+The response ceiling (`max_completion_tokens`) is the **per-model `maxTokens`
+catalog field** in the model-params catalog (`~/.pi/agent/model-params.json`,
+user tier, overrides the plugin-shipped tier) — an exact token value per wire
+model id, applied at model sync, editable via `/lemonade tune`.
+
+Exact values are used deliberately instead of a context-ratio formula: a small
+set of explicit numbers is more auditable than an implicit calculation.
 
 | Model | maxTokens | Why |
 |---|---|---|
-| Qwen thinking models (27B/35B) | `16384` | Thinking headroom at the 262k window (old formula + clamp landed here) |
-| Small / non-Qwen models | `4096` | Default response cap (matches the former fallback) |
+| Qwen thinking models (27B/35B) | `16384` | Thinking headroom at the 262k window |
+| Small / non-Qwen models | `4096` | Default response cap |
 
----
+## Subagents: local-first by configuration
 
-## The Pi-Subagents Fork (`lpb-stack/pi-subagents`) — retired 2026-09-10
+Upstream `@tintinweb/pi-subagents` is used unmodified. "Local-first"
+(subagents run on the local session model, no cloud default) is achieved
+purely through configuration:
 
-The `lpb-stack/pi-subagents` fork (based on `tintinweb/pi-subagents` v0.16.1,
-last state on `lpb-dev`) is **retired**. pi now installs upstream
-`@tintinweb/pi-subagents` from npm (version tracked in `settings.json`), and
-the local-first behavior the fork provided is handled by the config repo's
-subagent presets — agent `.md` files omit the `model:` field, so subagents
-inherit the session model instead of hardcoded cloud defaults.
+- Agent `.md` files **omit the `model:` field** — so subagents inherit the
+  session model instead of a hardcoded cloud default.
+- `globalDefaultModel: null` in the extension settings — nothing to fall back
+  to but the parent session model. **Zero Anthropic dependency.**
 
-### Key Change: `globalDefaultModel`
+**Model resolution chain:**
 
-Removes hardcoded `anthropic/claude-haiku-4-5` defaults from subagent
-definitions. Introduces `globalDefaultModel` in settings as the centralized
-model source of truth:
-
-**Model resolution chain (after patch):**
-1. Explicit `model` param in `Agent()` call
-2. `model` field in agent `.md` frontmatter
-3. **`globalDefaultModel`** from `pi-defaults.json`
+1. Explicit `model` param in the `Agent()` call
+2. `model` field in the agent `.md` frontmatter
+3. `globalDefaultModel` from the extension settings (`null` here)
 4. Parent session model (inherit)
 
-**Configuration for local-first:**
 ```json
 {
   "extensions": {
@@ -128,48 +110,30 @@ model source of truth:
 }
 ```
 
-`globalDefaultModel: null` means subagents inherit whatever model the
-parent session uses — **zero Anthropic dependency**.
-
----
-
-## Key Design Decisions
-
-### Patch Model
-
-All LocalPibox changes are kept as clean commits on top of upstream tags.
-The delta is always visible as the diff between upstream and `lpb-dev`.
-
-### FLM vs MTP Backend
+## Backend matrix: FLM vs MTP
 
 | Backend | Reasoning Support | Why |
 |---|---|---|
 | **MTP** (e.g. `Qwen3.6-35B-A3B-MTP-GGUF`) | ✅ Yes | Uses newer chat template that accepts `developer` role |
 | **FLM** (e.g. `qwen3.5-9b-FLM`) | ❌ No | Chat template only accepts `system/user/assistant/tool` roles |
 
----
-
 ## Known Issues & Mitigations
 
-### Qwen Thinking Overflow (2026-08-02)
+### Qwen thinking overflow
 
 Qwen with thinking enabled throws "context size exceeded" when
 `prompt + max_tokens` exceeds the window.
 
-**Mitigations (current):**
-- Per-model `maxTokens` ceilings in the lemonade-pi-plugin model-params
-  catalog (16384 for Qwen thinking models — exact values, no formula)
+**Current mitigations:**
+- Per-model `maxTokens` ceilings in the model-params catalog (16384 for Qwen
+  thinking models — exact values, no formula)
 - `reserveTokens` raised — compaction fires before the window overflows
 - Thinking disabled during compaction — prevents meta-thinking waste
-
-The original ratio-based mitigation (`LPB_MAX_TOKENS_CONTEXT_RATIO=0.06`
-in `start.sh` / `.env.example`) was retired 2026-09-02 — see Configuration
-above.
 
 ### agent-browser-chat
 
 Requires `AI_GATEWAY_API_KEY` (Vercel AI SDK gateway). Not configurable
-per-call. Cannot point at local Lemonade server. Not usable with this stack.
+per-call. Cannot point at the local Lemonade server. Not usable with this stack.
 
 ---
 
