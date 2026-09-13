@@ -8,11 +8,32 @@ from testharness import run_lpbx_suite, _bare_remote, _push_branch, _quiet_conso
 
 import os
 import io
+import json
 import subprocess
 from unittest import mock
 
 from localpibox.stack.workspace import cmd_workspace_sync
 from localpibox.stack import workspace as ws_mod
+from localpibox.stack import repos as repos_mod
+
+
+class _workspace_ctx:
+    """Context manager stacking the ws_mod constant patch with the
+    LPB_EXTENSION_REPOS patch (git_extension_pin reads it for managed-pin
+    detection) — both stopped on exit."""
+
+    def __init__(self, patches, exts):
+        self.patches, self.exts = patches, exts
+
+    def __enter__(self):
+        self.patches.start()
+        self.exts.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.exts.stop()
+        self.patches.stop()
+        return False
 
 
 def _workspace_patch(tmpdir, repos, config_branch="dev", config_repo=True):
@@ -36,13 +57,17 @@ def _workspace_patch(tmpdir, repos, config_branch="dev", config_repo=True):
         subprocess.run(["git", "-C", str(agent), "add", ".gitignore"], check=True)
         subprocess.run(["git", "-C", str(agent), "commit", "-qm", "gitignore"], check=True)
         subprocess.run(["git", "-C", str(agent), "push", "-q", "origin", config_branch], check=True)
-    return mock.patch.multiple(
+    patches = mock.patch.multiple(
         ws_mod,
         WORKSPACE_REPOS=repos,
         WORKSPACE_ROOT=tmpdir / "workspace",
         AGENT_GIT=agent / "git" / "github.com" / "lpb-stack",
         DEFAULT_AGENT_DIR=str(agent),
+        LPB_EXTENSION_REPOS=[r[0] for r in repos if r[2]],  # ws_mod's own copy
     )
+    exts = mock.patch.object(
+        repos_mod, "LPB_EXTENSION_REPOS", [r[0] for r in repos if r[2]])  # git_extension_pin's copy
+    return _workspace_ctx(patches, exts)
 
 
 def _branch(p):
@@ -296,6 +321,104 @@ def test_lpb_config_sync_upstream_failure_is_nonfatal(tmpdir):
         code = cmd_workspace_sync("dev", _quiet_console())
     assert code == 0
     assert _branch(clone) == "dev"
+
+
+def _write_settings(agent, packages):
+    # settings.json is gitignored in the real config repo — keep it that way
+    # here, or the config-repo sync step skips the 'dirty' worktree.
+    if (agent / ".git").exists():
+        (agent / ".gitignore").write_text(
+            (agent / ".gitignore").read_text() + "settings.json\n")
+        (agent / "settings.json").write_text(json.dumps({"packages": packages}))
+        # commit + push the .gitignore change (it is tracked); settings.json
+        # stays untracked+ignored so the worktree reads clean and the config
+        # repo fast-forwards without 'local ahead' friction.
+        subprocess.run(["git", "-C", str(agent), "add", ".gitignore"], check=True)
+        subprocess.run(["git", "-C", str(agent), "commit", "-qm", "gitignore settings.json"], check=True)
+        cur = subprocess.run(["git", "-C", str(agent), "branch", "--show-current"],
+                             check=True, capture_output=True, text=True).stdout.strip()
+        subprocess.run(["git", "-C", str(agent), "push", "-q", "origin", cur], check=True)
+    else:
+        (agent / "settings.json").write_text(json.dumps({"packages": packages}))
+
+
+def _read_settings(agent):
+    return json.loads((agent / "settings.json").read_text())
+
+
+def test_lpb_config_sync_realigns_stale_pins(tmpdir):
+    """workspace sync re-aligns settings.json pins to the synced pipeline:
+    a leftover -lpb-dev pin (from when the repo was on dev) is re-pinned to
+    the stable version when syncing --tag main."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    subprocess.run(["git", "-C", str(src), "checkout", "-q", "-b", "main"], check=True)
+    (src / "f").write_text("stable")
+    subprocess.run(["git", "-C", str(src), "commit", "-qam", "stable"], check=True)
+    subprocess.run(["git", "-C", str(src), "push", "-q", "origin", "main"], check=True)
+    agent = tmpdir / "agent"
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")], config_branch="main"):
+        _write_settings(agent, [
+            "git:github.com/lpb-stack/repo-a@0.0.83-lpb-dev",  # stale dev pin
+            "npm:user-pkg",
+        ])
+        with mock.patch.object(ws_mod, "expected_pin_version", lambda p: "0.0.83-lpb"):
+            code = cmd_workspace_sync("main", _quiet_console())
+    assert code == 0
+    pkgs = _read_settings(agent)["packages"]
+    assert "git:github.com/lpb-stack/repo-a@0.0.83-lpb" in pkgs
+    assert "git:github.com/lpb-stack/repo-a@0.0.83-lpb-dev" not in pkgs
+    assert "npm:user-pkg" in pkgs
+
+
+def test_lpb_config_sync_dedupes_polluted_pins(tmpdir):
+    """Already-polluted file (two entries for the same repo) → sync leaves
+    exactly ONE re-pinned entry per managed repo (pi maps every
+    git:<owner>/<repo> entry to one storage dir; duplicates race there)."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    agent = tmpdir / "agent"
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        _write_settings(agent, [
+            "git:github.com/lpb-stack/repo-a@0.0.83-lpb-dev",
+            "git:github.com/lpb-stack/repo-a@0.0.83-lpb",
+            "npm:user-pkg",
+        ])
+        with mock.patch.object(ws_mod, "expected_pin_version", lambda p: "0.0.83-lpb-dev"):
+            code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    pkgs = _read_settings(agent)["packages"]
+    assert pkgs.count("git:github.com/lpb-stack/repo-a@0.0.83-lpb-dev") == 1
+    assert "git:github.com/lpb-stack/repo-a@0.0.83-lpb" not in pkgs
+    assert "npm:user-pkg" in pkgs
+
+
+def test_realign_pins_no_settings_is_noop(tmpdir):
+    """No settings.json → realign is a clean no-op (0), not an error."""
+    from localpibox.stack.workspace import realign_pins
+    n = realign_pins(tmpdir / "nope", "dev", _quiet_console())
+    assert n == 0
+
+
+def test_update_pinned_versions_dedupes(tmpdir):
+    """_update_pinned_versions: re-pin + dedupe in one pass; first entry
+    wins, later duplicates of the same repo are dropped."""
+    from localpibox.stack.workspace import _update_pinned_versions
+    settings = {"packages": [
+        "npm:keep",
+        "git:github.com/lpb-stack/repo-a@old-1",
+        "git:github.com/lpb-stack/repo-a@old-2",   # duplicate → dropped
+    ]}
+    with mock.patch.object(repos_mod, "LPB_EXTENSION_REPOS", ["repo-a"]), \
+         mock.patch.object(ws_mod, "LPB_EXTENSION_REPOS", ["repo-a"]):
+        changes = _update_pinned_versions(settings, "0.0.9-lpb")
+    assert settings["packages"] == [
+        "npm:keep",
+        "git:github.com/lpb-stack/repo-a@0.0.9-lpb",
+    ]
+    assert changes == [("repo-a", "old-1", "0.0.9-lpb")]
 
 
 def main() -> int:

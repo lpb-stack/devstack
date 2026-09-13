@@ -421,6 +421,15 @@ def cmd_workspace_sync(pipeline: str, cons: Console) -> int:
     if not _sync_config(pipeline, cons):
         prepared = False
 
+    # Realign settings.json pins to the pipeline we just synced to: the
+    # single write path leaves repos, symlinks, AND pins consistent
+    # (fixes stale cross-pipeline pins that otherwise survive until the
+    # next manual sync-pins / render --force).
+    changed = realign_pins(DEFAULT_AGENT_DIR, pipeline, cons)
+    if changed:
+        cons.info(f"  {changed} extension pin(s) realigned to the "
+                  f"{pipeline} pipeline")
+
     cons.info("")
     if prepared:
         cons.done("Workspace prepared.")
@@ -466,23 +475,52 @@ def _get_pinned_versions(settings: dict) -> dict[str, str]:
     return pins
 
 
+def _dedupe_managed_pins(packages: list) -> list[str]:
+    """Collapse duplicate managed-pin entries: one entry per LPB extension repo.
+
+    A polluted settings.json can carry several `git:.../<name>@<old>` lines
+    per repo (e.g. a stale `-lpb-dev` pin surviving a pipeline move next to
+    the fresh one). pi maps every `git:<owner>/<repo>` entry to ONE storage
+    dir, so duplicates make `pi update --extensions` race on the same
+    checkout — deduping is mandatory, not cosmetic. Non-managed packages
+    (npm/bare) pass through untouched, in order.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for pkg in packages:
+        if not isinstance(pkg, str):
+            out.append(pkg)
+            continue
+        name = git_extension_pin(pkg)
+        if name is None:
+            out.append(pkg)
+        elif name not in seen:
+            seen.add(name)
+            out.append(pkg)
+    return out
+
+
 def _update_pinned_versions(settings: dict, target_version: str) -> list[tuple[str, str, str]]:
     """Update git-managed LPB extension pins to target_version. Returns changes.
 
+    Also DEDUPES: if a repo appears multiple times (stale pins from an
+    earlier pipeline move), only the FIRST entry is re-pinned — the rest
+    are dropped — so the result has exactly one entry per managed repo.
     npm/bare packages are left untouched — not managed by the stack VERSION.
     """
     packages = settings.get("packages", [])
     changes: list[tuple[str, str, str]] = []
+    deduped = _dedupe_managed_pins(packages)
     for name in LPB_EXTENSION_REPOS:
         marker = f"git:github.com/lpb-stack/{name}@"
-        for i, pkg in enumerate(packages):
+        for i, pkg in enumerate(deduped):
             if isinstance(pkg, str) and pkg.startswith(marker):
                 old_tag = pkg.split("@")[-1]
                 if old_tag != target_version:
-                    new_pkg = f"{marker}{target_version}"
-                    packages[i] = new_pkg
+                    deduped[i] = f"{marker}{target_version}"
                     changes.append((name, old_tag, target_version))
-    settings["packages"] = packages
+                break
+    settings["packages"] = deduped
     return changes
 
 
@@ -491,22 +529,55 @@ def _update_pinned_versions(settings: dict, target_version: str) -> list[tuple[s
 def sync_pins_quiet(agent_dir: str | Path, target_version: str,
                     cons: Console) -> int:
     """Non-interactive pin update: write pins != *target_version* in
-    settings.json. Returns the number of changed extension(s); 0 if nothing
-    to do or no settings.json (a missing file is not an error here —
-    callers treat it as 'nothing to sync'). Used by `lpb-devstack bump`
-    so a VERSION commit never lands with stale pins (the pre-commit
-    validate would fail, and a post-hook sync would target the OLD
-    version)."""
+    settings.json (also dedupes duplicate managed-pin entries). Returns the
+    number of changed extension(s); 0 if nothing to do or no settings.json
+    (a missing file is not an error here — callers treat it as 'nothing to
+    sync'). Used by `lpb-devstack bump` so a VERSION commit never lands
+    with stale pins (the pre-commit validate would fail, and a post-hook
+    sync would target the OLD version)."""
     settings = _read_settings(agent_dir)
     if settings is None:
         return 0
+    before = settings.get("packages", [])
     changed = _update_pinned_versions(settings, target_version)
-    if not changed:
+    if settings.get("packages") == before:
         return 0
     _write_settings(agent_dir, settings)
     for name, old, new in changed:
         cons.info(f"  pin {name}: {old} → {new}")
-    return len(changed)
+    return max(len(changed), 1)
+
+
+def realign_pins(agent_dir: str | Path, pipeline: str, cons: Console) -> int:
+    """Realign settings.json extension pins to *pipeline*'s stack version.
+
+    Shared write path for the two moments when the pipeline moves out from
+    under the runtime config:
+      - `workspace sync`  — every sync now leaves pins matching the branch
+        it just aligned the repos to (start dev / return to stable);
+      - `release promote` — after dev is merged to the stable branches, the
+        runtime must track the stable version, not leftover dev pins.
+
+    Re-pins stale pins AND drops duplicate managed-pin entries (a polluted
+    file can survive re-pinning with the first entry already at target).
+    Returns the number of pin operations performed (0 = already aligned or
+    no settings.json — a missing file is not an error here, mirroring
+    sync_pins_quiet).
+    """
+    target_version = expected_pin_version(pipeline)
+    settings = _read_settings(agent_dir)
+    if settings is None:
+        return 0
+    before = settings.get("packages", [])
+    changed = _update_pinned_versions(settings, target_version)
+    if settings.get("packages") == before:
+        return 0
+    _write_settings(agent_dir, settings)
+    for name, old, new in changed:
+        cons.info(f"  pin {name}: {old} → {new}")
+    if not changed:
+        cons.info("  dropped duplicate managed-pin entrie(s)")
+    return max(len(changed), 1)
 
 
 def cmd_workspace_sync_pins(pipeline: str, cons: Console) -> int:

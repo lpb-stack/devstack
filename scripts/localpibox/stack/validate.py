@@ -8,6 +8,7 @@ and settings.json pins.
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -33,6 +34,36 @@ from .workspace import (
     _repo_head,
     _resolve_repo_path,
 )
+
+
+def _branch_is_main() -> str:
+    """Current branch name of the devstack checkout being validated ('' if none)."""
+    out, _, code = git(".", "branch", "--show-current")
+    return out.strip() if code == 0 else ""
+
+
+def _allow_main_commit() -> bool:
+    """True when the caller opted into committing on the stable branch.
+
+    `release promote` sets LPB_ALLOW_MAIN_COMMIT=1 for its devstack
+    VERSION-strip commit (the only legitimate `git commit` on main —
+    promote's merges don't trigger hooks, the strip commit does).
+    """
+    return bool(os.environ.get("LPB_ALLOW_MAIN_COMMIT"))
+
+
+def _commit_guard_failed() -> bool:
+    """True when committing on the stable branch without the promote exemption.
+
+    Development belongs on the dev pipeline (dev branch or feature
+    branches); `main` only moves via `lpb-devstack release promote`.
+    """
+    return _branch_is_main() == "main" and not _allow_main_commit()
+
+
+def _inside_git_hook() -> bool:
+    """True when running under a git hook (git sets GIT_INDEX_FILE)."""
+    return bool(os.environ.get("GIT_INDEX_FILE"))
 
 
 def cmd_validate(pipeline: str, cons: Console) -> int:
@@ -68,7 +99,32 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
             if fix:
                 cons.info(f"     Fix: {fix}")
 
-    # ── 1. VERSION file ────────────────────────────────────────────────
+    # ── 0. Commit guard — main is promote-only ────────────────────────
+    # Commit-time check: under a git hook (GIT_INDEX_FILE set) a commit on
+    # the stable branch is a hard failure unless promote exempted it.
+    # Outside hooks (plain `lpb-devstack validate`) it's informational
+    # only — validating the stable environment on main must stay green.
+    # The guard is branch-based, NOT pipeline-based: the pipeline is
+    # detected from the VERSION file, which on main carries the stable
+    # suffix even right after a promote.
+    if _commit_guard_failed():
+        detail = ("on stable branch without the promote exemption "
+                  "(LPB_ALLOW_MAIN_COMMIT, set by 'release promote')")
+        if _inside_git_hook():
+            check(
+                "Commit target is not the stable branch (main is promote-only)",
+                False,
+                detail,
+                "Switch to the dev pipeline first (lpb-devstack workspace sync "
+                "--tag dev), or commit a feature branch off dev. Escape "
+                "hatches (deliberate stable commits only): "
+                "LPB_ALLOW_MAIN_COMMIT=1 git commit ...  or  --no-verify",
+            )
+            return 1
+        cons.warn("  (on the stable branch: commits to main need the promote "
+                  "exemption — LPB_ALLOW_MAIN_COMMIT=1 or --no-verify)")
+
+    # ── 1. VERSION file ─────────────────────────────────────────────────
     vf = _find_version_file()
     if vf is not None:
         version_on_disk = vf.read_text().strip()

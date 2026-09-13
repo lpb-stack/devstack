@@ -97,11 +97,13 @@ from localpibox.stack.repos import (  # noqa: E402
     DEFAULT_AGENT_DIR,
     DEFAULT_REMOTE,
     DEFAULT_REF,
+    GIT_EXTENSION_PREFIX,
     LPB_EXTENSION_REPOS,
     migrate_legacy_layout,
 )
 from localpibox.stack.version import detect_pipeline, get_version  # noqa: E402
 from localpibox.stack.workspace import (  # noqa: E402
+    _dedupe_managed_pins,
     _write_settings,
     cmd_workspace_sync_pins,
 )
@@ -244,8 +246,24 @@ def _render_file(
         and isinstance(existing.get("packages"), list)
     ):
         tpl_pkgs = new["packages"]
-        extras = [p for p in existing["packages"] if p not in tpl_pkgs]
-        new = {**new, "packages": tpl_pkgs + extras}
+        # A stale pin of a repo the TEMPLATE already owns (e.g. a leftover
+        # `-lpb-dev` pin after a promote to `-lpb`) is not a user addition:
+        # the template re-pins that repo. Keeping it would leave two
+        # entries for the same repo, which pi maps to one checkout dir
+        # (duplicate updates race there). Drop stale template-owned pins;
+        # keep genuine extras (npm/bare/other repos) — deduped for safety.
+        tpl_owned = {
+            p[len(GIT_EXTENSION_PREFIX):].split("@", 1)[0]
+            for p in tpl_pkgs
+            if isinstance(p, str) and p.startswith(GIT_EXTENSION_PREFIX)
+        }
+        extras = [
+            p for p in existing["packages"]
+            if p not in tpl_pkgs
+            and (not isinstance(p, str) or not p.startswith(GIT_EXTENSION_PREFIX)
+                 or p[len(GIT_EXTENSION_PREFIX):].split("@", 1)[0] not in tpl_owned)
+        ]
+        new = {**new, "packages": _dedupe_managed_pins(tpl_pkgs + extras)}
     merged = {**new, **existing} if local_wins else {**existing, **new}
     out.write_text(json.dumps(merged, indent=2) + "\n")
     cons.info(f"Re-rendered {out.name} from {template_name} (merged, user keys preserved)")

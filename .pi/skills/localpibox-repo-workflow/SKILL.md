@@ -111,7 +111,31 @@ Extension clones (pi loads these per settings.json pins):
   clean merges from `lpb-dev` via the release procedure. Divergence from
   `lpb-dev` is normal during active development.
 
-**Rule:** always work on the default branch (`dev` or `lpb-dev`).
+**Rule:** always work on the dev pipeline (`dev` / `lpb-dev`, or a feature
+branch off dev). **`main` is promoted, not developed on** — the devstack
+pre-commit hook enforces this (the *commit guard*, validate section 0):
+committing on `main` fails validation unless `release promote` sets the
+exemption (`LPB_ALLOW_MAIN_COMMIT=1`, automatic for its devstack
+VERSION-strip commit) or the commit is deliberately made with
+`--no-verify` / `LPB_ALLOW_MAIN_COMMIT=1 git commit ...`. Outside a hook,
+`lpb-devstack validate` on main only warns — validating the stable tree
+stays possible.
+
+**Pipeline moves are one command each:**
+- Start development: `lpb-devstack workspace sync --tag dev` → devstack,
+  config + both extension repos onto their dev branches **and**
+  `settings.json` pins re-aligned to the dev version (leftover stable
+  pins dropped).
+- Return to stable: `lpb-devstack workspace sync --tag main` → same, to
+  stable branches + stable pins.
+- After `release promote`: pins are re-aligned to the stable version
+  automatically (no leftover `-lpb-dev` pins), then `pi update --extensions`.
+
+`render --force` also refuses to reintroduce stale managed pins: an existing
+`git:github.com/lpb-stack/<repo>@<old>` whose repo the template already owns
+is a stale pin, not a user addition — it is dropped (or re-pinned), never
+appended alongside the template's entry (duplicate entries map to one pi
+checkout dir and race during `pi update --extensions`).
 
 ## Commit Author Convention
 
@@ -170,9 +194,9 @@ on `main` is the trigger:
 1. Builds `:{v}-cli/web`, `:main-cli/web`, `:latest-cli/web`, `:{sha}-cli/web`
 2. Tags the 4 repos on their stable branches (`lpb`/`main`)
 
-Then align the runtime to the stable pipeline:
+Then align the runtime to the stable pipeline (promote already re-aligned
+the `settings.json` pins to the stable version — verify, don't redo):
 ```bash
-lpb-config --tag main sync-pins   # pins → stable version
 pi update --extensions
 lpb-devstack --tag main validate
 ```
@@ -247,6 +271,11 @@ lpb-devstack validate-hooks     # full pre-commit checks (tests included)
 lpb-devstack --tag main validate
 ```
 
+`workspace sync` is the single write path for a pipeline move: clones /
+symlinks / branches **and** re-aligns `settings.json` extension pins to
+that pipeline's stack version (stale cross-pipeline pins are re-pinned and
+extra duplicates dropped — one entry per managed repo).
+
 Both tools are thin CLIs over the shared `scripts/localpibox/stack/` library
 (`gitutil` / `repos` / `version` / `workspace` / `validate` / `release`).
 
@@ -288,16 +317,18 @@ Same pattern — template in config repo, user config on host volume:
 1. devstack's tracked changes are fully staged (unstaged edits would
    silently miss the commit)
 2. `python3 scripts/lpb-devstack validate` — the full stack alignment
-   check (VERSION, `LPB_PI_VERSION`, extension pins, branch alignment,
-   pipeline consistency, config worktree clean + extension-repo WIP
-   report). Runs the WORKSPACE copy on purpose: the PATH `lpb-devstack`
-   is the image-baked one and stays stale until the next rebuild, so the
-   hook always validates with the current logic.
+   check. **Check 0 (commit guard)**: committing on `main` fails unless
+   the promote exemption is set (see Branch Strategy) — development
+   belongs on `dev` or feature branches. Runs the WORKSPACE copy on
+   purpose: the PATH `lpb-devstack` is the image-baked one and stays
+   stale until the next rebuild, so the hook always validates with the
+   current logic. Remaining checks: VERSION, `LPB_PI_VERSION`,
+   extension pins, branch alignment, pipeline consistency, config
+   worktree clean + extension-repo WIP report.
 3. `scripts/test_lpb.py` passes (skip with `SKIP_TESTS=1`)
 
-The full test suite in pre-commit is intentional — it guards against
-low-quality changes reaching the repo. `lpb-devstack validate-hooks` runs
-the same checks on demand.
+Escape hatches: `SKIP_TESTS=1` (tests only), `LPB_ALLOW_MAIN_COMMIT=1`
+(commit on main without promote), `--no-verify` (everything).
 
 **commit-msg** — **no-op.** Version bumping is manual (`lpb-devstack bump`).
 Git hooks never write VERSION or cross-repo state.
