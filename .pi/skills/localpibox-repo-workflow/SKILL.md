@@ -122,11 +122,11 @@ VERSION-strip commit) or the commit is deliberately made with
 stays possible.
 
 **Pipeline moves are one command each:**
-- Start development: `lpb-devstack workspace sync --tag dev` → devstack,
+- Start development: `lpb-devstack --tag dev workspace sync` → devstack,
   config + both extension repos onto their dev branches **and**
   `settings.json` pins re-aligned to the dev version (leftover stable
   pins dropped).
-- Return to stable: `lpb-devstack workspace sync --tag main` → same, to
+- Return to stable: `lpb-devstack --tag main workspace sync` → same, to
   stable branches + stable pins.
 - After `release promote`: pins are re-aligned to the stable version
   automatically (no leftover `-lpb-dev` pins), then `pi update --extensions`.
