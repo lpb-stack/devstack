@@ -20,35 +20,54 @@ from .repos import (
     AGENT_GIT,
     CONFIG_REPO,
     DEFAULT_AGENT_DIR,
+    DEVSTACK_REPO,
     LPB_EXTENSION_REPOS,
     UPSTREAM_REMOTES,
     WORKSPACE_REPOS,
     WORKSPACE_ROOT,
     _repo_remote,
     git_extension_pin,
+    resolve_devstack_dir,
 )
 from .version import expected_branch, expected_pin_version, get_version
 
 
 # ─── Repo helpers ─────────────────────────────────────────────────────────
 
-def _resolve_repo_path(repo_name: str) -> Path | None:
+def _resolve_repo_path(repo_name: str, cons: Console | None = None) -> Path | None:
     """Resolve a stack repo's actual path (follows symlinks); None when missing.
 
     Workspace repos live under WORKSPACE_ROOT (extension repos are symlinks
     into the agent git area); the config repo lives in the agent dir itself.
+    The devstack repo is matched by content, so its checkout may be named
+    anything (see resolve_devstack_dir).
     """
     if repo_name == CONFIG_REPO[0]:
         path = Path(DEFAULT_AGENT_DIR)
         return path if (path / ".git").is_dir() else None
-    ws_path = WORKSPACE_ROOT / repo_name
-    if ws_path.is_symlink():
-        target = ws_path.resolve()
+    if repo_name == DEVSTACK_REPO:
+        path = (resolve_devstack_dir(WORKSPACE_ROOT, cons=cons)
+                or WORKSPACE_ROOT / DEVSTACK_REPO)
+    else:
+        path = WORKSPACE_ROOT / repo_name
+    if path.is_symlink():
+        target = path.resolve()
         if target.exists():
             return target
-    elif (ws_path / ".git").exists() or ws_path.is_dir():
-        return ws_path
+    elif path.is_dir():
+        return path
     return None
+
+
+def is_linked_worktree(path: Path) -> bool:
+    """True for a `git worktree add` checkout (its .git is a file, not a dir).
+
+    A linked worktree CANNOT be on the pipeline branch: that branch is checked
+    out in the main clone, so git refuses it here. Pipeline-branch alignment
+    only means something for the primary clone — for a worktree it is reported
+    and not counted as a failure (release gates re-check it where it applies).
+    """
+    return (path / ".git").is_file()
 
 
 def _repo_branch(repo_path: Path) -> str:
@@ -180,11 +199,36 @@ def _detached_ref(path: Path) -> str:
     return f"detached @ {_repo_head(path)}"
 
 
+def _perms_hint(path: Path) -> str:
+    """Why creating *path* failed and what to do about it.
+
+    The usual cause is a container that mounts only its own project directory
+    (LPB_DEVCONTAINER_WORKSPACE_DIR): the workspace root then belongs to root
+    and no sibling repo can be created in it.
+    """
+    return (f"cannot create {path} — {path.parent} is not writable"
+            " (a single-project container mounts only its own directory; run"
+            " workspace sync where the full stack workspace is mounted, or"
+            " mount the workspace root instead of the project subdir)")
+
+
+def _ensure_dir(path: Path, what: str, cons: Console) -> bool:
+    """mkdir -p *path*, reporting a permission failure instead of raising."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        return True
+    except OSError as e:
+        cons.error(f"  {what}: {e.strerror or e} ({path})")
+        cons.warn(f"  hint: {_perms_hint(path)}")
+        return False
+
+
 def _clone_repo(name: str, dest: Path, expected: str, cons: Console) -> bool:
     """Clone a stack repo at *expected* into *dest*. Returns True on success."""
     remote = _repo_remote(name)
     cons.info(f"  {name}: cloning {remote} (branch: {expected}) ...")
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    if not _ensure_dir(dest.parent, f"{name}: parent directory", cons):
+        return False
     out, err, code = run_cmd(
         _git_authenticated(["clone", "-q", "--branch", expected, remote, str(dest)]),
         timeout=600,
@@ -194,6 +238,47 @@ def _clone_repo(name: str, dest: Path, expected: str, cons: Console) -> bool:
         shutil.rmtree(dest, ignore_errors=True)
         return False
     return True
+
+
+def _link_extension(name: str, ext_path: Path, ws_path: Path, cons: Console) -> bool:
+    """Point the workspace entry *ws_path* at the extension clone *ext_path*.
+
+    Returns False (with a message, never a traceback) when the entry exists and
+    must not be touched, or when the workspace root is not writable.
+    """
+    try:
+        if ws_path.is_symlink():
+            if ws_path.resolve() == ext_path.resolve():
+                return True
+            if ws_path.resolve().exists():
+                cons.error(f"  {name}: {ws_path} symlinks to "
+                           f"{ws_path.resolve()} — left untouched")
+                return False
+            ws_path.unlink()
+            ws_path.symlink_to(ext_path)
+            cons.info(f"  {name}: symlink → {ext_path}")
+            return True
+        if ws_path.is_dir():
+            if (ws_path / ".git").exists():
+                rem, _, _ = git(ws_path, "remote", "get-url", "origin")
+                if rem.strip() != _repo_remote(name):
+                    cons.error(f"  {name}: {ws_path} is a git repo with a "
+                               "different remote — left untouched")
+                    return False
+                shutil.rmtree(ws_path)
+                ws_path.symlink_to(ext_path)
+                cons.info(f"  {name}: replaced real clone with symlink → {ext_path}")
+                return True
+            cons.error(f"  {name}: {ws_path} exists but is not a git repo — "
+                       "left untouched")
+            return False
+        ws_path.symlink_to(ext_path)
+        cons.info(f"  {name}: symlink → {ext_path}")
+        return True
+    except OSError as e:
+        cons.error(f"  {name}: {e.strerror or e} ({ws_path})")
+        cons.warn(f"  hint: {_perms_hint(ws_path)}")
+        return False
 
 
 def _ensure_counterpart_branch(
@@ -232,12 +317,45 @@ def _ensure_counterpart_branch(
         cons.info(f"  {name}: could not create local '{counterpart}' — skipped")
 
 
+def _stale_worktree(path: Path) -> str:
+    """Dead 'gitdir:' target of a moved/renamed worktree; '' when git works.
+
+    A worktree records the admin dir of its main clone by absolute path, so
+    renaming or moving either side (or re-creating the container around a
+    different host path) leaves every git command failing with 'not a git
+    repository'. sync/validate can do nothing until that pointer is repaired.
+    """
+    marker = path / ".git"
+    if not marker.is_file():
+        return ""
+    try:
+        text = marker.read_text(errors="replace").strip()
+    except OSError:
+        return ""
+    if not text.startswith("gitdir:"):
+        return ""
+    target = text.split(":", 1)[1].strip()
+    if not target:
+        return text
+    resolved = Path(target)
+    if not resolved.is_absolute():
+        resolved = path / resolved
+    return "" if resolved.exists() else target
+
+
 def _sync_repo(name: str, path: Path, expected: str, cons: Console) -> bool:
     """Fetch, align the branch, and fast-forward *path* to origin/*expected*.
 
     Returns True when the repo ends up on *expected* and up to date.
     Dirty worktrees are left untouched and reported.
     """
+    dead = _stale_worktree(path)
+    if dead:
+        cons.error(f"  {name}: {path} is a worktree whose git dir is gone ({dead})")
+        cons.warn("  hint: repair it from the main clone: "
+                  f"git worktree repair {path}")
+        return False
+
     out, err, code = git_auth(path, "fetch", "--prune", "origin", timeout=180)
     if code != 0:
         cons.error(f"  {name}: fetch failed ({(err or out).strip()[:80]})")
@@ -309,10 +427,25 @@ def cmd_workspace_status(pipeline: str, cons: Console) -> int:
     all_aligned = True
     for name, is_sym, is_ext, dev_branch, main_branch in WORKSPACE_REPOS:
         expected = dev_branch if pipeline == "dev" else main_branch
-        path = _resolve_repo_path(name)
+        path = _resolve_repo_path(name, cons)
 
         if path is None:
-            cons.warn(f"  {name}: MISSING")
+            if is_sym and (AGENT_GIT / name / ".git").exists():
+                # The clone is there; only the workspace symlink could not be
+                # created (a single-project container cannot write the root).
+                cons.warn(f"  {name}: clone at {AGENT_GIT / name}, symlink "
+                          f"{WORKSPACE_ROOT / name} missing")
+            else:
+                cons.warn(f"  {name}: MISSING")
+            all_aligned = False
+            continue
+
+        dead = _stale_worktree(path)
+        if dead:
+            cons.error(f"  {name}: {path} is a worktree whose git dir is gone "
+                       f"({dead})")
+            cons.warn(f"  hint: repair it from the main clone: "
+                      f"git worktree repair {path}")
             all_aligned = False
             continue
 
@@ -323,6 +456,12 @@ def cmd_workspace_status(pipeline: str, cons: Console) -> int:
 
         if branch == expected:
             cons.info(f"  {name}: {where}{symlink} ({head}) ✅")
+        elif branch and branch not in (dev_branch, main_branch) \
+                and is_linked_worktree(path):
+            # A linked worktree cannot hold the pipeline branch (the main clone
+            # has it checked out), so a feature branch there is normal.
+            cons.info(f"  {name}: {where} (linked worktree — {expected} is in "
+                      f"the main clone) ℹ")
         else:
             cons.warn(f"  {name}: {where} (expected: {expected}){symlink} ({head}) ❌")
             all_aligned = False
@@ -355,7 +494,8 @@ def cmd_workspace_sync(pipeline: str, cons: Console) -> int:
     cons.info("")
 
     prepared = True
-    WORKSPACE_ROOT.mkdir(parents=True, exist_ok=True)
+    if not _ensure_dir(WORKSPACE_ROOT, "workspace root", cons):
+        return 1
 
     for name, is_sym, _is_ext, dev_branch, main_branch in WORKSPACE_REPOS:
         expected = dev_branch if pipeline == "dev" else main_branch
@@ -370,29 +510,9 @@ def cmd_workspace_sync(pipeline: str, cons: Console) -> int:
                     prepared = False
                     continue
 
-            if ws_path.is_symlink():
-                if ws_path.resolve() != ext_path.resolve():
-                    ws_path.unlink()
-                    ws_path.symlink_to(ext_path)
-                    cons.info(f"  {name}: symlink → {ext_path}")
-            elif ws_path.is_dir():
-                if (ws_path / ".git").exists():
-                    rem, _, _ = git(ws_path, "remote", "get-url", "origin")
-                    if rem.strip() == _repo_remote(name):
-                        shutil.rmtree(ws_path)
-                        ws_path.symlink_to(ext_path)
-                        cons.info(f"  {name}: replaced real clone with symlink → {ext_path}")
-                    else:
-                        cons.error(f"  {name}: {ws_path} is a git repo with a different remote — left untouched")
-                        prepared = False
-                        continue
-                else:
-                    cons.error(f"  {name}: {ws_path} exists but is not a git repo — left untouched")
-                    prepared = False
-                    continue
-            else:
-                ws_path.symlink_to(ext_path)
-                cons.info(f"  {name}: symlink → {ext_path}")
+            if not _link_extension(name, ext_path, ws_path, cons):
+                prepared = False
+                continue
 
             if not _sync_repo(name, ext_path, expected, cons):
                 prepared = False
@@ -402,8 +522,8 @@ def cmd_workspace_sync(pipeline: str, cons: Console) -> int:
             _ensure_upstream_remote(name, ext_path, cons)
             continue
 
-        # Real repos live in the workspace root
-        path = _resolve_repo_path(name)
+        # Real repos live in the workspace root (devstack: any name, by content)
+        path = _resolve_repo_path(name, cons)
         if path is None:
             if not _clone_repo(name, WORKSPACE_ROOT / name, expected, cons):
                 prepared = False

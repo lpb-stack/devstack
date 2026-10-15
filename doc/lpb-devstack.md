@@ -32,9 +32,16 @@ commit** — the bump commit is the release trigger.
 
 ### Repo Tagging
 
+**Tagging is CI's job.** Every push that changes `VERSION` runs the
+`tag-repos` job, which tags the 4 repos on the pipeline's branches — on dev
+as well as on main. Do not tag locally as part of the normal flow.
+`lpb-devstack tag-repos` exists only to complete a release whose CI job
+failed (it is idempotent, so re-running is safe) — and unlike CI it needs a
+local clone of every repo, so it is rarely the right tool.
+
 | Command | Description |
 |---|---|
-| `lpb-devstack tag-repos` | Tag the 4 stack repos (excl. devstack) at the committed VERSION |
+| `lpb-devstack tag-repos` | Tag the 4 stack repos (excl. devstack) at the committed VERSION (CI-failure recovery only) |
 | `lpb-devstack tag-repos --branch dev` | Tag on dev branches (`lpb-dev`/`dev`) |
 | `lpb-devstack tag-repos --branch main` | Tag on stable branches (`lpb`/`main`) |
 | `lpb-devstack tag-repos --version V` | Explicit version (default: devstack VERSION file) |
@@ -53,12 +60,33 @@ partially-tagged stack is a release bug.
 | `lpb-devstack workspace sync` | Clone missing repos, create symlinks, align branches, pull latest (the single write path) |
 | `lpb-config sync-pins` | Sync settings.json pins to the pipeline's stack version |
 
+**Locating the devstack checkout.** The workspace repos live under
+`$LPB_WORKSPACE_ROOT` (default `/home/lpb/workspace`), but devstack is found
+by *content* (`VERSION` + `scripts/localpibox/stack/`), not by directory
+name — a git worktree checked out as `~/workspace/molly` is the devstack repo
+just as much as `~/workspace/devstack`. With more than one checkout present
+the commands ask which to use; pin one explicitly with
+`lpb-devstack --devstack-dir PATH` or `LPB_DEVSTACK_DIR=PATH` (needed for
+non-interactive runs). When no checkout is found, `workspace sync` clones one
+at the conventional `$LPB_WORKSPACE_ROOT/devstack`.
+
 ### Stack Validation
 
 | Command | Description |
 |---|---|
 | `lpb-devstack validate` | Full stack alignment check (repos, branches, pins, env) |
 | `lpb-devstack validate-hooks` | Run the full devstack pre-commit checks (tests included) |
+
+**Host vs container runs.** `validate` is also the pre-commit check, so it runs
+wherever the commit happens. Outside a stack container (no `/opt/pi-support`,
+no `LPB_CONTAINER_NAME`) the checks that only exist in the container — the
+target is the mounted `~/.pi/agent` config repo, the extension clones,
+settings.json pins and the container-local model server — are reported as
+*skipped*, not as failures. Override with `LPB_STACK_IN_CONTAINER=0|1`.
+A devstack **linked worktree** on a feature branch is likewise informational
+(`ℹ … dev is in the main clone`): git cannot check the pipeline branch out
+twice, and `bump`/`release` enforce alignment where it applies. An unreachable
+model server is one skip, never a stack failure.
 
 ### Release Promotion
 
@@ -116,7 +144,7 @@ lpb-devstack --tag main validate          # validate against stable pipeline
 lpb-devstack --tag dev workspace sync     # sync dev pipeline repos
 ```
 
-## Manual Tagging Flow (dev)
+## Shipping a Dev Image (dev pipeline)
 
 ```bash
 # 1. Work happens on dev as usual (CI runs tests on every push)
@@ -128,19 +156,42 @@ lpb-devstack workspace status
 lpb-devstack validate
 ```
 
-## Manual Tagging Flow (stable release)
+## Stable Release Flow (dev → main)
 
 ```bash
 lpb-devstack release docs-ready                # merge dev→docs, review site, flag DOCS_READY
 lpb-devstack release status                    # readiness check (repos + docs)
 lpb-devstack release promote --dry-run         # inspect plan
 lpb-devstack release promote                   # dev → stable + push (blocked until docs ready)
-lpb-devstack tag-repos --branch main           # tag the 4 repos on stable branches
+# CI (main pipeline) then builds images, TAGS the 4 repos on their stable
+# branches (the tag-repos job), and publishes the stable docs version
+# (https://lpb-stack.github.io/devstack/<version>/)
+# Only if that CI job failed, complete the tagging by hand:
+#   lpb-devstack tag-repos --branch main        # idempotent — existing tags are skipped
 lpb-config --tag main sync-pins   # pins → stable tag
 pi update --extensions
-# CI (main pipeline) then builds images, tags repos, and publishes the
-# stable docs version (https://lpb-stack.github.io/devstack/<version>/)
 ```
+
+## Getting a stack-CLI change into the container
+
+`lpb-devstack` and `lpb-config` on PATH are the **image-baked copies** of
+`scripts/` (installed to `/opt/pi-support/`), not the mounted workspace —
+edits in `devstack/scripts/` do not change the commands you run until the
+image is rebuilt. Two ways, in the normal order of preference:
+
+1. **Commit + bump (CI builds the image).** `lpb-devstack bump` then push —
+   CI rebuilds and publishes for the new VERSION (`scripts/**` and `support/**`
+   are in the workflow's `paths` filter, so a code-only push runs tests only;
+   the VERSION change is what triggers the build — see *Shipping a Dev Image*).
+2. **Build locally on the host.** `support/build.py [cli|web]` builds the dev
+   image from the working tree (add `--push` to publish; it needs the host's
+   podman/docker — there is no build engine inside the container), then
+   `lpb --tag dev …` runs it. Use this to test before bumping.
+
+To check behaviour **inside** the container before any rebuild, run the
+workspace copy directly — `python3 scripts/lpb-devstack …` — which is exactly
+what the devstack pre-commit hook does, on purpose, so validation always uses
+the current logic rather than the stale image copy.
 
 ## Quick Reference
 

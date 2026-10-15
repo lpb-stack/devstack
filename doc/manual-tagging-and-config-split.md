@@ -39,7 +39,7 @@ lpb-config check           # Validate the installation (read-only checklist)
 **`lpb-devstack` commands:**
 ```bash
 lpb-devstack bump                    # Bump VERSION (patch/minor/major/set)
-lpb-devstack tag-repos               # Tag 4 repos with committed VERSION
+lpb-devstack tag-repos               # (CI-failure recovery only — CI tags the repos)
 lpb-devstack workspace status        # Branches + alignment
 lpb-devstack workspace sync          # Clone/symlink/align/pull
 lpb-devstack validate                # Full stack alignment check
@@ -100,7 +100,7 @@ as a safeguard against AI-generated garbage reaching the repository.
 | Cron/manual always build | `VERSION_CHECK` outputs `changed=true` | Preserves weekly-cron and `:latest` dispatch behavior |
 | `_stack_lib.py` → `localpibox/stack/` | Full stack operations in package | Both CLIs stay thin (~500/~400 lines) |
 | Extensionless CLI names | `scripts/lpb-config` not `.py` | Test harness loads via `SourceFileLoader` |
-| `tag-repos` via local workspace | Uses workspace clones, not GitHub API | No raw-SHA push without local ODB objects |
+| `tag-repos` via local workspace | Uses workspace clones, not GitHub API | No raw-SHA push without local ODB objects; CI does the tagging, so the local path is only a recovery route |
 | Merge commit handling | `git diff-tree` → first-parent fallback | Merges show no diff by default |
 
 ---

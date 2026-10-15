@@ -27,21 +27,35 @@ warn()  { echo "[WARN]  $*" >&2; }
 debug() { [[ "${DEBUG:-}" != "true" ]] || echo "[DEBUG] $*"; }
 
 # ─── Provider-credential check (shared by first-run + every-boot) ─────────
-# True when auth.json carries a usable lemonade entry (same candidate order
-# as the plugin's readStoredPayload). Used to decide whether the in-container
-# non-interactive setup fallback must run.
-_has_lemonade_creds() {
+# True when a model provider is configured — lemonade entry in auth.json
+# (same candidate order as the plugin's readStoredPayload) or a provider
+# with a baseUrl in models.json (pi-native flavors, e.g. strixite).
+# Used to decide whether the in-container non-interactive setup fallback
+# must run.
+_has_provider_creds() {
     local agent_dir="${1:-${HOME_DIR}/.pi/agent}"
-    [[ -f "${agent_dir}/auth.json" ]] || return 1
-    AUTH_JSON="${agent_dir}/auth.json" python3 -c '
+    AGENT_DIR_CHECK="${agent_dir}" python3 -c '
 import json, os, sys
+from pathlib import Path
+d = Path(os.environ["AGENT_DIR_CHECK"])
 try:
-    d = json.load(open(os.environ["AUTH_JSON"]))
+    auth = json.load(open(d / "auth.json"))
 except Exception:
-    sys.exit(1)
-e = d.get("lemonade") or (d.get("providers") or {}).get("lemonade") \
-    or (d.get("oauth") or {}).get("lemonade")
-sys.exit(0 if isinstance(e, dict) and e.get("refresh") else 1)
+    auth = {}
+e = auth.get("lemonade") or (auth.get("providers") or {}).get("lemonade") \
+    or (auth.get("oauth") or {}).get("lemonade")
+if isinstance(e, dict) and e.get("refresh"):
+    sys.exit(0)
+try:
+    mj = json.load(open(d / "models.json"))
+except Exception:
+    mj = {}
+providers = mj.get("providers") if isinstance(mj, dict) else None
+if isinstance(providers, dict):
+    for entry in providers.values():
+        if isinstance(entry, dict) and entry.get("baseUrl"):
+            sys.exit(0)
+sys.exit(1)
 '
 }
 
@@ -133,6 +147,8 @@ BARE_NAMES=(
     CONTEXT7_API_KEY
     LEMONADE_BASE_URL
     LEMONADE_API_KEY
+    STRIXITE_BASE_URL
+    STRIXITE_API_KEY
     OPENROUTER_BASE_URL
     ED_PORT
     HOST
@@ -150,6 +166,7 @@ BARE_NAMES=(
 # Container-safe fallbacks per bare name (absent = pure LPB_→bare promotion).
 declare -A BARE_FALLBACKS=(
     [LEMONADE_BASE_URL]="http://127.0.0.1:13305/v1"
+    [STRIXITE_BASE_URL]="http://127.0.0.1:8000/v1"
     [OPENROUTER_BASE_URL]="https://openrouter.ai/api/v1"
     [ED_PORT]="3000"
     [HOST]="0.0.0.0"
@@ -209,6 +226,7 @@ export LPB_GITHUB_TOKEN="${GITHUB_TOKEN}"
 export LPB_PERSIST_GH_CONFIG="${LPB_PERSIST_GH_CONFIG:-true}"
 
 debug "LEMONADE_BASE_URL=$LEMONADE_BASE_URL"
+debug "STRIXITE_BASE_URL=${STRIXITE_BASE_URL:-}"
 debug "WORKSPACE_DIR=$WORKSPACE_DIR"
 debug "ED_PORT=$ED_PORT"
 debug "EDITOR_HOST=$HOST"
@@ -374,21 +392,21 @@ if [[ "$FIRST_RUN" = "true" ]]; then
     # 'lpb setup' on the host, or 'lpb-config setup' in a shell.
     if command -v lpb-config >/dev/null 2>&1; then
         lpb-config render || warn "lpb-config render failed — Pi will use defaults"
-        if _has_lemonade_creds "${AGENT_DIR}"; then
-            debug "Lemonade provider already configured (host wizard or prior setup)"
-        elif [[ -n "${LEMONADE_BASE_URL:-}" ]]; then
-            info "Lemonade provider not configured — running non-interactive setup..."
+        if _has_provider_creds "${AGENT_DIR}"; then
+            debug "Model provider already configured (host wizard or prior setup)"
+        elif [[ -n "${LEMONADE_BASE_URL:-}" || -n "${STRIXITE_BASE_URL:-}" ]]; then
+            info "Model provider not configured — running non-interactive setup..."
             if lpb-config setup --non-interactive; then
-                info "  Lemonade provider configured."
+                info "  Model provider configured."
             else
                 warn "────────────────────────────────────────────────────────" >&2
-                warn " Lemonade provider setup FAILED — model not configured" >&2
+                warn " Model provider setup FAILED — model not configured" >&2
                 warn " Fix it with 'lpb setup' on the host, or open a shell" >&2
                 warn " (lpb --shell / ssh in) and run 'lpb-config setup'." >&2
                 warn "────────────────────────────────────────────────────────" >&2
             fi
         else
-            warn "No Lemonade provider configured (no LEMONADE_BASE_URL set)."
+            warn "No model provider configured (no LEMONADE_BASE_URL/STRIXITE_BASE_URL set)."
             warn "Run 'lpb setup' on the host, or 'lpb-config setup' in a shell."
         fi
     fi
@@ -417,7 +435,7 @@ fi
 # The in-container logs are the only feedback channel in detached modes
 # (--ssh / --web), so a missing provider must be loud there, not a log
 # line nobody reads once. Every boot until the provider is configured.
-if ! _has_lemonade_creds "${AGENT_DIR}"; then
+if ! _has_provider_creds "${AGENT_DIR}"; then
     warn "Model provider NOT configured — run 'lpb setup' on the host (or 'lpb-config setup' here)."
 fi
 

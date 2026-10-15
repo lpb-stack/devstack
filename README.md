@@ -2,9 +2,9 @@
 
 A local-first AI development environment in a single container: the
 **Pi** coding agent, **VSCodium** editor, and **agent-browser** automation —
-optimized for Qwen models served locally through **Lemonade**, targeting
-AMD Strix Halo hardware. No cloud LLM required; your code and data stay
-on your machine.
+optimized for Qwen models served locally through **Lemonade** or
+**Strixite**, targeting AMD Strix Halo hardware. No cloud LLM required;
+your code and data stay on your machine.
 
 ## What You Get
 
@@ -13,7 +13,7 @@ Everything below ships in the base image — no extra setup beyond the
 
 | Capability | What it means in practice |
 |---|---|
-| **Local inference, zero cloud** | All model calls go to the local Lemonade server (GGUF models, AMD Strix Halo optimized). Your code, data, and prompts never leave the machine. |
+| **Local inference, zero cloud** | All model calls go to a local model server — **Lemonade** (GGUF models, pi plugin with thinking + vision) or **Strixite** (podman instance, pi-native OpenAI-compatible provider — [Strixite integration](doc/strixite-integration.md)). Your code, data, and prompts never leave the machine. |
 | **Full coding agent** | Pi — foreground CLI, interactive shell, SSH login, or web; sessions, session tree, skills, prompt templates, themes. |
 | **Controlled thinking depth** | `/thinking` levels (off → high) with per-level budgets and per-model effort mapping; per-model parameters tunable live via `/lemonade tune` — [Thinking Support](doc/thinking-support.md) |
 | **Vision** | Screenshots and visual page analysis by the local vision model — the agent can see webpages, UIs, and render output. |
@@ -52,18 +52,19 @@ lpb                              # resumes your last project (or ~)
 
 On the **first run** — in every mode (`lpb`, `--shell`, `--ssh`, `--web`) —
 `lpb` checks the model-provider state (stored credentials + a live probe of
-the Lemonade server). If it's missing or broken and you're on a terminal,
-the **setup wizard** runs before the container starts: config repo, server
-URL, API key, default model (from the server's live model list), MCP
-servers, and lpb-memory config — every step validated, with errors shown and
+the selected server). If it's missing or broken and you're on a terminal,
+the **setup wizard** runs before the container starts: config repo, provider
+(Lemonade or Strixite), server URL, API key, default model (from the
+server's live model list), MCP servers, and lpb-memory config — every step validated, with errors shown and
 re-asked
 until they're right. The configuration is written straight into the state
 volume, so it's persisted **before first use**; the launch summary ends with
 a model status line.
 
 - **Non-TTY** (hosts/CI) or `lpb --non-interactive`: no wizard — the env
-  (`LPB_LEMONADE_BASE_URL` / `LPB_LEMONADE_API_KEY` / `lpb.conf.env`) is
-  passed through and the container runs a non-interactive fallback.
+  (`LPB_MODEL_PROVIDER` + `LPB_LEMONADE_BASE_URL` / `LPB_STRIXITE_BASE_URL`
+  / … / `lpb.conf.env`) is passed through and the container runs a
+  non-interactive fallback.
 - Re-run any time (all modes): `lpb setup` (wizard) and `lpb doctor`
   (read-only validation). Inside the container the same wizard is
   `lpb-config setup` (and `lpb-config check`).
@@ -92,11 +93,12 @@ lpb --help       # full usage
 | **Pi** | Coding agent CLI — mainstream pi from the npm registry (pinned in `lpb.stack.env`); Qwen thinking is handled by the lemonade plugin |
 | **VSCodium** | Web-based editor (`:web` image), connects over the OpenVSCode protocol |
 | **lemonade-pi-plugin** (forked) | Model provider for the local **Lemonade** server — Qwen thinking + vision support |
+| **Strixite** | Alternative local model backend — podman instance exposing an OpenAI-compatible API on `:8000`; registered as a pi-native custom provider (models.json), no plugin |
 | **lpb-memory** | Persistent memory + session search for the agent |
 | **pi-subagents** | Subagent model registry — upstream `tintinweb/pi-subagents` installed via npm (no hardcoded cloud models) |
 | **agent-browser** + Chrome | Browser automation tools for the agent |
 | **MCP servers** | Exa (web search), Context7 (library docs), agent-browser |
-| **Lemonade** (host prerequisite) | Local model server — AMD/Strix Halo-optimized, serves GGUF models; on this host or any reachable host; model chosen by the user at setup (no default) |
+| **Lemonade** or **Strixite** (host prerequisite) | Local model servers — Lemonade is AMD/Strix Halo-optimized and serves GGUF models; Strixite runs as a podman image instance on port 8000. Either can be selected at setup; model chosen by the user (no default) |
 
 ## How It Works
 
@@ -107,7 +109,7 @@ flowchart LR
         H1["your project dir"]
         H2["~/.lpb-stack/state/"]
         H3["~/.lpb-stack/agent-browser/"]
-        H4["Lemonade (:13305)"]
+        H4["Lemonade (:13305)<br/>Strixite (:8000)"]
     end
 
     subgraph Image["ghcr.io/lpb-stack/devstack<br/>(Ubuntu 26.04 + Node.js 24)"]
@@ -276,10 +278,11 @@ Let `lpb` resolve the tag (`lpb --tag dev|main|<version>`), or pull e.g.
 
 ### No model available / setup failed
 
-The Lemonade server on the host must be running before the setup wizard can
-validate it: start it, then re-run `lpb setup` (or `lpb doctor` to see what
-is wrong). Inside a running session, `/lemonade refresh` re-syncs the model
-list once the provider is configured.
+The selected model server (Lemonade or Strixite) must be running before the
+setup wizard can validate it: start it, then re-run `lpb setup` (or
+`lpb doctor` to see what is wrong). Inside a running session,
+`/lemonade refresh` re-syncs the model list once the provider is
+configured.
 
 ### Port already in use
 

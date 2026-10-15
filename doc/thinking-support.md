@@ -99,6 +99,10 @@ complete answer (`finish_reason: stop`). The [Thinking Benchmark](thinking-bench
 documents the test set, the wire-fidelity assertions, and the per-model
 results that are regenerated with every release tag.
 
+> **Strixite-served models are a different path**: no plugin, no budgets — the
+> level goes out as `reasoning_effort` only, and the mapping/spellings live in
+> `models.json`. See [Strixite integration](strixite-integration.md).
+
 ## 5. Server-side configuration
 
 - **Per-request `enable_thinking`** — honored in both directions on all

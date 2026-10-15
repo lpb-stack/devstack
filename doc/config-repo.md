@@ -80,6 +80,24 @@ The `__LPB_VERSION__` placeholder in the template is replaced with the
 stack version at boot. Pins are synced to a new stack version by
 `lpb-config sync-pins`.
 
+### Built-in extensions
+
+Pi ships four built-in extensions (`builtin:mcp`, `builtin:codemode`,
+`builtin:tool-search`, `builtin:llama.cpp`). The stack uses the
+**pi-mcp-adapter** package for MCP, which registers `/mcp` and therefore
+replaces the built-in MCP extension — loading both makes Pi drop the built-in
+one and print a startup warning. The template disables it explicitly:
+
+```json
+{
+  "extensions": ["-builtin:mcp"]
+}
+```
+
+`-builtin:<name>` is a settings-level exclusion (`pi config` shows the same
+state under *Built-in extensions*; `--no-mcp` disables it for one run). Shell-level
+`pi mcp` commands keep using Pi's own implementation regardless.
+
 ## mcp.json Lifecycle
 
 Same template-driven pattern (`mcp.json.template` → `mcp.json`, rendered

@@ -84,6 +84,36 @@ def confirm(
             return False
 
 
+def select_one(
+    prompt: str,
+    options: list[str],
+    *,
+    default_index: int = 0,
+    inp: TextIO | None = None,
+    out: TextIO | None = None,
+) -> str:
+    """Ask the user to pick one of *options*; returns the chosen entry.
+
+    Empty input takes *default_index*; anything that is not a valid number
+    asks again. ``inp``/``out`` are injectable for tests.
+    """
+    inp = inp if inp is not None else sys.stdin
+    out = out if out is not None else sys.stdout
+    if len(options) == 1:
+        return options[0]
+    out.write(f"{prompt}\n")
+    for i, opt in enumerate(options, start=1):
+        out.write(f"  {i}) {opt}\n")
+    while True:
+        out.write(f"Choice [{default_index + 1}]: ")
+        out.flush()
+        answer = (inp.readline() or "").strip()
+        if not answer:
+            return options[default_index]
+        if answer.isdigit() and 1 <= int(answer) <= len(options):
+            return options[int(answer) - 1]
+
+
 class _NullStream:
     """Duck-typed output sink that discards writes (used for --quiet)."""
 
@@ -94,4 +124,5 @@ class _NullStream:
         pass
 
 
-__all__ = ["add_common_args", "confirm", "console_from_args", "die", "install_sigpipe_handler"]
+__all__ = ["add_common_args", "confirm", "console_from_args", "die",
+            "install_sigpipe_handler", "select_one"]

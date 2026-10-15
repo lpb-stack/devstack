@@ -67,6 +67,12 @@ class FakeSetup:
     def lemonade_creds(self, agent_dir):
         return self.creds
 
+    def configured_provider(self, agent_dir):
+        return "lemonade" if self.creds else ""
+
+    def provider_creds(self, agent_dir, provider=""):
+        return self.decode_creds(self.creds) if self.creds else ("", "")
+
     def decode_creds(self, entry):
         p = json.loads(entry["refresh"])
         return p["baseUrl"], p["apiKey"]

@@ -21,6 +21,8 @@ from .repos import (
     WORKSPACE_ROOT,
     _DEVSTACK_ROOT,
     git_extension_pin,
+    in_stack_container,
+    repo_path,
 )
 from .version import _find_version_file, expected_branch, expected_pin_version, get_stack_env, get_stack_env_base, get_version
 from .serverhealth import run_server_checks
@@ -32,6 +34,7 @@ from .workspace import (
     _repo_branch,
     _repo_head,
     _resolve_repo_path,
+    is_linked_worktree,
 )
 
 
@@ -52,6 +55,25 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
 
     total_checks = 0
     passed_checks = 0
+
+    # Config repo, extension clones, rendered pins and the model server all
+    # live in the CONTAINER (mounted ~/.pi + published port). A host run — a
+    # worktree checkout, where the pre-commit hook also runs — has none of
+    # them, and reporting each as ❌ buries the checks that DO apply there.
+    container = in_stack_container()
+    skipped = 0
+
+    def skip(what: str, why: str) -> None:
+        """Report a check that does not apply here: never pass, never fail."""
+        nonlocal skipped
+        skipped += 1
+        cons.warn(f"  ⚠ {what} — skipped ({why})")
+
+    if not container:
+        cons.warn("  ⚠ Container-only checks (config repo, extension clones,\n"
+                  "     rendered pins, model server) are skipped: this is not a\n"
+                  "     LocalPibox container. Run 'lpb-devstack validate' inside\n"
+                  "     one for the full stack check.")
 
     def check(label: str, condition: bool, detail: str = "", fix: str = "") -> None:
         nonlocal total_checks, passed_checks
@@ -97,7 +119,9 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     # at-a-glance pipeline-consistency check at the end of section 3.
     branch_map: list[tuple[str, str, str]] = []
     config_path = Path(DEFAULT_AGENT_DIR)
-    if (config_path / ".git").exists():
+    if not container:
+        skip("config repo", "container-only")
+    elif (config_path / ".git").exists():
         config_branch = _repo_branch(config_path)
         config_expected = expected_branch("config", pipeline)
         branch_map.append(("config", config_branch, config_expected))
@@ -117,17 +141,32 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
 
     for name, is_sym, is_ext, dev_branch, main_branch in WORKSPACE_REPOS:
         expected = expected_branch(name, pipeline)
-        path = _resolve_repo_path(name)
+        if is_sym and not container:
+            continue                           # extension clones: container-only
+        path = _resolve_repo_path(name, cons)
 
         if path is None:
-            check(f"  {name} exists", False,
-                  f"{WORKSPACE_ROOT / name} not found",
-                  "Clone or create symlink")
+            why = f"{repo_path(name)} not found"
+            if is_sym and (AGENT_GIT / name / ".git").exists():
+                why = (f"clone at {AGENT_GIT / name}, workspace symlink "
+                       f"{WORKSPACE_ROOT / name} missing")
+            check(f"  {name} exists", False, why, "Clone or create symlink")
             continue
 
         branch = _repo_branch(path)
         head = _repo_head(path)
         details = f"branch={branch} ({head})"
+
+        if branch and branch not in (dev_branch, main_branch) \
+                and is_linked_worktree(path):
+            # A linked worktree cannot hold the pipeline branch — the main
+            # clone has it checked out, so git refuses it here. Feature-branch
+            # worktrees are how this stack is developed; alignment is enforced
+            # where it applies, by bump/release on the primary clone.
+            cons.info(f"  ℹ {name}: '{branch}' in a linked worktree — "
+                      f"{expected} is in the main clone (not blocking)")
+            continue
+
         branch_map.append((name, branch, expected))
 
         if is_sym:
@@ -157,7 +196,7 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     # config repo: everything runtime is gitignored there, so a dirty
     # worktree means uncommitted template/skill/doc content — always an
     # anomaly, and a hard check.
-    if (config_path / ".git").exists():
+    if (config_path / ".git").exists() and container:
         cfg_dirty = _dirty_files(config_path)
         check(
             "  config worktree clean",
@@ -175,15 +214,17 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     # hook (unstaged check), not here.
     dirty_ext: list[str] = []
     for name, is_sym, is_ext, dev_branch, main_branch in WORKSPACE_REPOS:
-        if name == "devstack":
+        if name == "devstack" or not container:
             continue
-        path = _resolve_repo_path(name)
+        path = _resolve_repo_path(name, cons)
         if path is None:
             continue
         files = _dirty_files(path)
         if files:
             dirty_ext.append(f"{name} ({len(files)} file(s))")
-    if dirty_ext:
+    if not container:
+        skip("extension worktree state", "container-only")
+    elif dirty_ext:
         cons.warn(f"  WIP in extension repos (not blocking): {', '.join(dirty_ext)}")
     else:
         cons.info("  extension repos: no uncommitted changes")
@@ -192,8 +233,10 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     cons.info("")
     cons.info("  Extension alignment:")
 
+    if not container:
+        skip("extension alignment", "container-only")
     for name, is_sym, is_ext, dev_branch, main_branch in WORKSPACE_REPOS:
-        if not is_ext:
+        if not is_ext or not container:
             continue
 
         ws_path = WORKSPACE_ROOT / name
@@ -248,8 +291,10 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     cons.info("  Extension pins:")
 
     settings_path = config_path / "settings.json"
-    settings = _read_settings(config_path)
-    if settings:
+    settings = _read_settings(config_path) if container else None
+    if not container:
+        skip("settings.json pins", "container-only")
+    elif settings:
         packages = [p for p in settings.get("packages", []) if isinstance(p, str)]
         target_version = expected_pin_version(pipeline)
         current_pins = _get_pinned_versions(settings)
@@ -282,36 +327,54 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
     #       the lpb-stack/pi fork is retired; mainstream pi installs from
     #       the npm registry at LPB_PI_VERSION, so fork branch state is moot)
 
-    # ── 7. Lemonade server health (external host — live probes) ───────
+    # ── 7. Model server health (external host — live probes) ──────────
     # The server is user-managed outside this stack; after an upgrade its
     # startup flags can silently regress. Probe what HTTP exposes.
     cons.info("")
-    cons.info("  Lemonade server:")
+    cons.info("  Model server:")
 
-    try:
-        import json as _json
-        from pathlib import Path as _Path
-        auth = _json.loads((_Path.home() / ".pi" / "agent" / "auth.json").read_text())
-        entry = (auth.get("lemonade") or (auth.get("providers") or {}).get("lemonade")
-                 or (auth.get("oauth") or {}).get("lemonade") or {})
-        creds = _json.loads(entry.get("refresh") or "{}")
-        base = (creds.get("baseUrl") or "").strip().rstrip("/")
-        skey = creds.get("apiKey") or entry.get("access") or ""
-        if base.startswith(("http://", "https://")) and skey:
-            # probe with the configured session model when resolvable
-            probe_model = None
-            try:
-                dm = (_read_settings(config_path) or {}).get("defaultModel")
-                if isinstance(dm, str) and dm:
-                    probe_model = dm.split("/")[-1]
-            except Exception:
-                probe_model = None
-            for chk in run_server_checks(base, skey, probe_model):
-                check(chk["label"], chk["ok"], chk["detail"], chk["fix"])
-        else:
-            cons.warn("  ⚠ Lemonade server not configured (auth.json) — skipping live probes")
-    except Exception as e:
-        cons.warn(f"  ⚠ Lemonade server probe skipped: {e}")
+    if not container:
+        skip("server probes", "the configured server URL is container-local")
+    else:
+        try:
+            from ..setup import (configured_provider, provider_creds,
+                                 probe_server)
+            agent_dir = Path(DEFAULT_AGENT_DIR)
+            provider = configured_provider(agent_dir) or "lemonade"
+            base, skey = provider_creds(agent_dir, provider)
+            dm = (_read_settings(config_path) or {}).get("defaultModel")
+            probe_model = dm.split("/")[-1] if isinstance(dm, str) and dm else None
+            if not base.startswith(("http://", "https://")):
+                skip(f"{provider} probes",
+                     "no server configured (auth.json / models.json)")
+            else:
+                # Liveness first, cheaply. A server that is simply DOWN is not
+                # a stack misalignment: serverhealth documents these probes as
+                # warnings, and running them anyway reported two bogus
+                # cache/budget failures for one dead port and failed the hook.
+                probe = probe_server(base, skey, timeout=6.0, provider=provider)
+                if not probe.reachable:
+                    skip(f"{provider} probes", f"{base} unreachable ({probe.error})")
+                elif probe.auth_failed:
+                    check(f"  {provider} server reachable", False,
+                          f"{base} rejected the key: {probe.error}",
+                          "lpb-config set api-key (or lpb-config setup)")
+                else:
+                    check(f"  {provider} server reachable", True,
+                          f"{len(probe.models)} model(s) at {base}")
+                    if probe_model:
+                        served = {m["id"] for m in probe.models}
+                        check("  default model served", probe_model in served,
+                              f"{provider}/{probe_model}"
+                              + ("" if probe_model in served
+                                 else " not in the server's model list"),
+                              "lpb-config set model <id> or load it on the server")
+                    if provider == "lemonade" and skey:
+                        # Lemonade only: deep flag checks the plugin depends on
+                        for chk in run_server_checks(base, skey, probe_model):
+                            check(chk["label"], chk["ok"], chk["detail"], chk["fix"])
+        except Exception as e:
+            cons.warn(f"  ⚠ Model server probe skipped: {e}")
 
     # ── Summary ────────────────────────────────────────────────────────
     cons.info("")
@@ -321,6 +384,8 @@ def cmd_validate(pipeline: str, cons: Console) -> int:
         cons.done(f"  All {total_checks} checks passed ✅")
     else:
         cons.warn(f"  {passed_checks}/{total_checks} checks passed ({pct:.0f}%) ❌")
+    if skipped:
+        cons.info(f"  {skipped} check group(s) skipped as container-only")
     cons.info("=" * 60)
 
     return 0 if passed_checks == total_checks else 1

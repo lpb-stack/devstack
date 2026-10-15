@@ -98,7 +98,7 @@ lpb /myproject -- --thinking high            # pass any pi flag
 Before the **first container start — in every mode (cli, shell, ssh, web)** —
 `lpb` validates the model-provider configuration. The provider state is
 checked live (stored credentials in `LPB_STATE_DIR/agent/auth.json` + a real
-HTTP probe of the Lemonade server), not a one-shot first-boot flag:
+HTTP probe of the selected model server), not a one-shot first-boot flag:
 
 - **healthy** → silent; the stored URL/key are passed to the container.
 - **missing or broken + TTY** → the **setup wizard** runs (config repo →
@@ -109,7 +109,8 @@ HTTP probe of the Lemonade server), not a one-shot first-boot flag:
   `settings.json` and `lpb-memory-config.json` directly into the state dir,
   so the configuration is **persisted before the first use**.
 - **missing or broken + non-TTY** (or `lpb --non-interactive`) → env
-  passthrough (`LPB_LEMONADE_BASE_URL` / `LPB_LEMONADE_API_KEY` / `lpb.conf.env`)
+  passthrough (`LPB_MODEL_PROVIDER` + `LPB_LEMONADE_BASE_URL` /
+  `LPB_STRIXITE_BASE_URL` / … / `lpb.conf.env`)
   with a visible note; the container runs a non-interactive fallback.
 
 Because validation is live, a server that moves or a key that changes is

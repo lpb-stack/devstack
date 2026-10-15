@@ -49,9 +49,12 @@ CI: VERSION changed in pushed commit → tests → build + publish → tag 4 rep
   (`--push` also pushes, triggering CI)
 - **CI never writes VERSION** — the `VERSION_CHECK` job gates build/tag on a
   VERSION change in the pushed commit; cron and manual dispatch always build
-- **Tags** — created by CI (or `lpb-devstack tag-repos`) on the **other 4
-  repos only** (devstack is tracked by its VERSION file, never tagged; the
-  retired pi fork is not tagged),
+- **Tags** — created by **CI** (the `tag-repos` job, both pipelines) on the
+  **other 4 repos only** — never tag locally as part of the normal flow;
+  `lpb-devstack tag-repos` only exists to complete a release whose CI job
+  failed (it is idempotent, and it needs a local clone of every repo).
+  Devstack is tracked by its VERSION file, never tagged (the retired pi fork
+  is not tagged either),
   pointing at the pipeline's branch HEAD
 - **`lpb.stack.env`** — `LPB_PI_VERSION` is the mainstream pi **npm version**
   (e.g. `0.84.4`); `LPB_CONFIG_REF` is a **branch name** (`dev`/`main`)
@@ -84,6 +87,11 @@ Workspace:
   /home/lpb/workspace/pi                  (reference clone of the retired fork)
   /home/lpb/workspace/lemonade-pi-plugin  (symlink → agent git clone)
   /home/lpb/workspace/lpb-memory          (symlink → agent git clone)
+
+The devstack checkout is found by CONTENT (VERSION + scripts/localpibox/stack/),
+not by directory name — a worktree named anything (~/workspace/molly) works.
+When the workspace holds more than one checkout the tools ask; pin one with
+`--devstack-dir PATH` or `LPB_DEVSTACK_DIR`.
 
 Agent config (cloned from lpb-stack/config by start.sh at container start):
   /home/lpb/.pi/agent/                    (settings.json, AGENTS.md, skills/, agents/)
@@ -211,6 +219,24 @@ docs) make the push look tests-only and the build/tag is skipped. If that
 happens, run `bump` again so a VERSION change lands on the new tip, and
 push. `bump` (without `--push`) warns about this.
 
+### Getting stack-CLI changes into the container
+
+`lpb-devstack` / `lpb-config` on PATH are the **image-baked copies** of
+`scripts/` (`/opt/pi-support/`), not the mounted workspace — editing
+`scripts/localpibox/` changes nothing for the commands you run until the image
+is rebuilt:
+
+1. **Commit + bump** → CI builds/publishes the image for the new VERSION
+   (`scripts/**`, `support/**` are in the `paths` filter, so the VERSION
+   change is still what triggers the build).
+2. **Local build on the host** → `support/build.py [cli|web]` (add `--push`;
+   it needs the host's podman/docker — no build engine inside the container),
+   then `lpb --tag dev …` — use this to test before bumping.
+
+Before either, verify with the workspace copy: `python3 scripts/lpb-devstack …`
+(the pre-commit hook does exactly this, deliberately, so validation never runs
+against the stale image copy).
+
 ## Stack Tools
 
 **`lpb-config`** — config repo manager (in-container, `~/.local/bin/lpb-config`):
@@ -237,7 +263,7 @@ local keys win in the memory config).
 
 ```bash
 lpb-devstack bump [--minor|--major] [--set V] [--no-commit] [--push]
-lpb-devstack tag-repos [--branch dev|main] [--version V] [--dry-run]
+lpb-devstack tag-repos [--branch dev|main] [--version V] [--dry-run]  # CI-failure recovery only
 lpb-devstack workspace status | sync
 lpb-devstack validate
 lpb-devstack release status | docs-ready | promote [--yes] [--dry-run] [--rebase] [--force]
@@ -245,6 +271,8 @@ lpb-devstack validate-hooks     # full pre-commit checks (tests included)
 
 # Pipeline override (dev vs main) on any command:
 lpb-devstack --tag main validate
+# devstack checkout to work on (detected by content when omitted):
+lpb-devstack --devstack-dir ~/work/molly workspace sync
 ```
 
 Both tools are thin CLIs over the shared `scripts/localpibox/stack/` library
@@ -293,6 +321,11 @@ Same pattern — template in config repo, user config on host volume:
    report). Runs the WORKSPACE copy on purpose: the PATH `lpb-devstack`
    is the image-baked one and stays stale until the next rebuild, so the
    hook always validates with the current logic.
+   On a **host** run (outside a stack container) the container-only checks —
+   config repo, extension clones, rendered pins, model server — are reported
+   as skipped, not failed, and a devstack **linked worktree** on a feature
+   branch is informational (the pipeline branch lives in the main clone). So
+   committing from a worktree checkout needs no `--no-verify`.
 3. `scripts/test_lpb.py` passes (skip with `SKIP_TESTS=1`)
 
 The full test suite in pre-commit is intentional — it guards against

@@ -238,8 +238,11 @@ class _FakeSetupOk:
     def quick_status(self, agent_dir, timeout=3.0):
         return "ok", "fake ok"
 
-    def lemonade_creds(self, agent_dir):
-        return None
+    def configured_provider(self, agent_dir):
+        return ""
+
+    def provider_creds(self, agent_dir, provider=""):
+        return "", ""
 
     def run_wizard(self, **kw):
         raise AssertionError("wizard should not run (provider ok)")

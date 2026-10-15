@@ -17,6 +17,8 @@ from .repos import (
     _DEVSTACK_ROOT,
     VERSION_RE,
     WORKSPACE_ROOT,
+    devstack_dirs,
+    resolve_devstack_dir,
     stack_repos,
 )
 
@@ -59,8 +61,13 @@ def detect_pipeline(tag_override: str | None = None) -> str:
 # ─── VERSION discovery ─────────────────────────────────────────────────────
 
 def _devstack_root_candidates() -> list[Path]:
-    """Known devstack repo roots: repo checkout, Docker image, workspace clone."""
-    return [_DEVSTACK_ROOT, Path("/opt/devstack"), WORKSPACE_ROOT / "devstack"]
+    """Known devstack repo roots: repo checkout, Docker image, workspace clone.
+
+    The workspace clone is discovered by content, so a checkout under another
+    name (a worktree, e.g. ~/workspace/molly) is found too.
+    """
+    return [_DEVSTACK_ROOT, Path("/opt/devstack"), *devstack_dirs(),
+            WORKSPACE_ROOT / "devstack"]
 
 
 def get_version() -> str:
@@ -132,7 +139,9 @@ def expected_pin_version(pipeline: str) -> str:
     version = get_version()
     if pipeline != "main":
         return version
-    devstack_dir = WORKSPACE_ROOT / "devstack"
+    # The devstack checkout is found by content — its directory name is not
+    # fixed (a worktree may be named anything, e.g. ~/workspace/molly).
+    devstack_dir = resolve_devstack_dir() or (WORKSPACE_ROOT / "devstack")
     if (devstack_dir / ".git").is_dir():
         git_auth(devstack_dir, "fetch", "origin", "main", "--quiet", timeout=120)
         out, _, code = git(devstack_dir, "show", "origin/main:VERSION")

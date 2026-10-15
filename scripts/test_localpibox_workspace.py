@@ -8,11 +8,14 @@ from testharness import run_lpbx_suite, _bare_remote, _push_branch, _quiet_conso
 
 import os
 import io
+import stat
 import subprocess
+import sys
 from unittest import mock
 
 from localpibox.stack.workspace import cmd_workspace_sync
 from localpibox.stack import workspace as ws_mod
+from localpibox.stack import repos as repos_mod
 
 
 def _workspace_patch(tmpdir, repos, config_branch="dev", config_repo=True):
@@ -296,6 +299,208 @@ def test_lpb_config_sync_upstream_failure_is_nonfatal(tmpdir):
         code = cmd_workspace_sync("dev", _quiet_console())
     assert code == 0
     assert _branch(clone) == "dev"
+
+
+# ─── devstack checkout discovery (directory name is not fixed) ────────────
+
+def _make_devstack(dirpath):
+    """A directory carrying the devstack signature (VERSION + stack library)."""
+    sig = dirpath / "scripts" / "localpibox" / "stack"
+    sig.mkdir(parents=True, exist_ok=True)
+    (sig / "workspace.py").write_text("")
+    (dirpath / "VERSION").write_text("0.0.1-lpb-dev\n")
+    return dirpath
+
+
+def _sign_devstack(dirpath, push_to=None):
+    """Add the devstack signature to a git work tree (committed, pushed back)."""
+    if (dirpath / "VERSION").is_file():
+        return dirpath                     # already signed (came from the remote)
+    _make_devstack(dirpath)
+    subprocess.run(["git", "-C", str(dirpath), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(dirpath), "-c", "user.email=t@t",
+                    "-c", "user.name=t", "commit", "-qm", "signature"], check=True)
+    if push_to is not None:
+        subprocess.run(["git", "-C", str(dirpath), "push", "-q", "origin", push_to],
+                       check=True)
+    return dirpath
+
+
+def test_devstack_dir_detected_by_content(tmpdir):
+    """A checkout named 'molly' is the devstack repo — the name is not a fact."""
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    with mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"):
+        assert repos_mod.devstack_dirs(ws) == [ws / "molly"]
+        assert repos_mod.resolve_devstack_dir(ws) == ws / "molly"
+
+
+def test_devstack_dir_asks_when_ambiguous(tmpdir):
+    """Two checkouts → ask; the answer decides, empty answer takes the first."""
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    _make_devstack(ws / "other")
+    repos_mod.set_devstack_dir(None)
+    with mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"), \
+         mock.patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("LPB_DEVSTACK_DIR", None)          # pins are tested separately
+        out = io.StringIO()
+        cons = log_mod.Console(color=False, out=out, err=out)
+        chosen = repos_mod.resolve_devstack_dir(
+            ws, cons=cons, inp=io.StringIO("2\n"), out=out)
+        assert chosen == ws / "other"
+        assert "which one" in out.getvalue()
+        out2 = io.StringIO()
+        cons2 = log_mod.Console(color=False, out=out2, err=out2)
+        default = repos_mod.resolve_devstack_dir(
+            ws, cons=cons2, inp=io.StringIO("\n"), out=out2)
+        assert default == ws / "molly"
+
+
+def test_devstack_dir_pin_skips_the_prompt(tmpdir):
+    """--devstack-dir / LPB_DEVSTACK_DIR picks the checkout without asking."""
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    _make_devstack(ws / "other")
+    out = io.StringIO()
+    cons = log_mod.Console(color=False, out=out, err=out)
+    repos_mod.set_devstack_dir(ws / "other")
+    try:
+        assert repos_mod.resolve_devstack_dir(ws, cons=cons, out=out) == ws / "other"
+        assert "which one" not in out.getvalue()
+    finally:
+        repos_mod.set_devstack_dir(None)
+    with mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"), \
+         mock.patch.dict(os.environ, {"LPB_DEVSTACK_DIR": str(ws / "molly")}):
+        assert repos_mod.resolve_devstack_dir(ws, cons=cons, out=out) == ws / "molly"
+
+
+def test_devstack_dir_pin_must_be_a_checkout(tmpdir):
+    """A pin pointing at something that is not devstack → reported, not guessed."""
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    (tmpdir / "stray").mkdir()
+    out, err = io.StringIO(), io.StringIO()
+    cons = log_mod.Console(color=False, out=out, err=err)
+    repos_mod.set_devstack_dir(tmpdir / "stray")
+    try:
+        assert repos_mod.resolve_devstack_dir(ws, cons=cons, out=out) is None
+    finally:
+        repos_mod.set_devstack_dir(None)
+    assert "not a devstack checkout" in (out.getvalue() + err.getvalue())
+
+
+def test_devstack_dir_repo_path_uses_the_checkout(tmpdir):
+    """repo_path('devstack') follows the detected checkout (release/version code)."""
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    with mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"), \
+         mock.patch.object(repos_mod, "WORKSPACE_ROOT", ws):
+        assert repos_mod.repo_path("devstack") == ws / "molly"
+        assert repos_mod.repo_path("lpb-memory") == ws / "lpb-memory"
+
+
+def test_devstack_root_candidates_include_renamed_checkout(tmpdir):
+    """VERSION discovery sees a renamed checkout too."""
+    from localpibox.stack import version as version_mod
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    with mock.patch.object(repos_mod, "WORKSPACE_ROOT", ws), \
+         mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"), \
+         mock.patch.object(version_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"):
+        assert ws / "molly" in version_mod._devstack_root_candidates()
+
+
+def _clone_signed_devstack(remote, dest):
+    """Clone *remote* at dev and add the devstack signature (committed + pushed)."""
+    subprocess.run(["git", "clone", "-q", "--branch", "dev", str(remote), str(dest)],
+                   check=True)
+    return _sign_devstack(dest, "dev")
+
+
+def test_devstack_sync_uses_renamed_checkout(tmpdir):
+    """sync must NOT clone a second devstack beside the running checkout."""
+    remote, src = _bare_remote(tmpdir, "devstack", "dev")
+    _sign_devstack(src, "dev")
+    ws = tmpdir / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    molly = ws / "molly"
+    _clone_signed_devstack(remote, molly)
+    _push_branch(src, "dev")                      # a commit molly must take
+    repos_mod.set_devstack_dir(None)
+    with _workspace_patch(tmpdir, [("devstack", False, False, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    repos_mod.set_devstack_dir(None)
+    assert code == 0
+    assert _branch(molly) == "dev"
+    assert (molly / "f").read_text() == "two"    # fast-forwarded in place
+    assert not (ws / "devstack").exists()        # no second clone
+
+
+def test_devstack_sync_ambiguous_without_prompt(tmpdir):
+    """Non-interactive + two checkouts → warns, keeps working on the first."""
+    remote, src = _bare_remote(tmpdir, "devstack", "dev")
+    _sign_devstack(src, "dev")
+    ws = tmpdir / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    _clone_signed_devstack(remote, ws / "molly")
+    _clone_signed_devstack(remote, ws / "other")
+    out, err = io.StringIO(), io.StringIO()
+    repos_mod.set_devstack_dir(None)
+    try:
+        with _workspace_patch(tmpdir, [("devstack", False, False, "dev", "main")]), \
+             mock.patch.object(sys, "stdin", io.StringIO()):   # non-tty → never blocks
+            cons = log_mod.Console(color=False, out=out, err=err)
+            code = cmd_workspace_sync("dev", cons)
+    finally:
+        repos_mod.set_devstack_dir(None)
+    text = out.getvalue() + err.getvalue()
+    assert code == 0
+    assert "checkouts" in text and "--devstack-dir" in text
+
+
+def test_devstack_stale_worktree_reports_repair(tmpdir):
+    """Moved/renamed worktree → repair hint instead of a wall of git errors."""
+    repo = tmpdir / "main-clone"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    (repo / "f").write_text("one")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "first"], check=True)
+    wt = tmpdir / "moved-worktree"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q",
+                    "-b", "wt", str(wt)], check=True)
+    assert ws_mod._stale_worktree(wt) == ""        # healthy worktree
+    # Simulate the host-path move that strands the recorded gitdir.
+    (wt / ".git").write_text("gitdir: /nowhere/.git/worktrees/moved-worktree\n")
+    assert ws_mod._stale_worktree(wt) == "/nowhere/.git/worktrees/moved-worktree"
+    out, err = io.StringIO(), io.StringIO()
+    cons = log_mod.Console(color=False, out=out, err=err)
+    assert ws_mod._sync_repo("devstack", wt, "dev", cons) is False
+    assert "git worktree repair" in (out.getvalue() + err.getvalue())
+
+
+def test_sync_unwritable_workspace_root_reports(tmpdir):
+    """Single-project container (root-owned workspace root) → error, no traceback."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    _push_branch(src, "dev")
+    ws = tmpdir / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    ws.chmod(stat.S_IRUSR | stat.S_IXUSR)          # r-x: entries cannot be created
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+            cons = log_mod.Console(color=False, out=out, err=err)
+            code = cmd_workspace_sync("dev", cons)
+    finally:
+        ws.chmod(stat.S_IRWXU)
+    text = out.getvalue() + err.getvalue()
+    assert code == 1
+    assert "not writable" in text
+    assert "Traceback" not in text
 
 
 def main() -> int:

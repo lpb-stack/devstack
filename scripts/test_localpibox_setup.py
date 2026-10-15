@@ -296,11 +296,12 @@ def test_wizard_interactive_full(tmpdir):
     orig = setup_mod._http_get_json
     setup_mod._http_get_json = _http_ok
     _env_setup()
-    # answers: URL (accept), key (accept), model pick 1,
+    # answers: provider choice (Enter = lemonade), URL (accept), key (accept),
+    #          model pick 1,
     #          memory: mode (accept), transport (accept), bg model (accept),
     #          limits: 4000, (accept), (accept),
     #          mcp: exa (accept), chrome-devtools (accept)
-    answers = ["", "", "1", "", "", "", "4000", "", "", "", ""]
+    answers = ["", "", "", "1", "", "", "", "4000", "", "", "", ""]
     try:
         r = _run_interactive(answers, agent_dir=agent, cons=_quiet_console(),
                              config_remote="file:///nonexistent", config_ref="main")
@@ -324,11 +325,12 @@ def test_wizard_interactive_invalid_inputs_reprompt(tmpdir):
     orig = setup_mod._http_get_json
     setup_mod._http_get_json = _http_ok
     _env_setup()
-    # URL (accept), key (accept), model: 99/x invalid → 2,
+    # provider choice (Enter = lemonade), URL (accept), key (accept),
+    # model: 99/x invalid → 2,
     # memory: mode 9 invalid → accept, transport accept, bg model accept,
     # limits: abc invalid → 4000, accept, accept,
     # mcp: exa (accept), chrome-devtools (accept)
-    answers = ["", "", "99", "x", "2", "9", "", "", "", "abc", "4000", "", "", "", ""]
+    answers = ["", "", "", "99", "x", "2", "9", "", "", "", "abc", "4000", "", "", "", ""]
     try:
         r = _run_interactive(answers, agent_dir=agent, cons=_quiet_console(),
                              config_remote="file:///nonexistent", config_ref="main")
@@ -365,10 +367,11 @@ def test_wizard_interactive_anyway_unreachable(tmpdir):
     orig = setup_mod._http_get_json
     setup_mod._http_get_json = _http_down
     _env_setup()
-    # answers: URL 'a' (anyway), model continue (accept),
+    # answers: provider choice (Enter = lemonade), URL 'a' (anyway),
+    #          model continue (accept),
     #          memory: mode, transport, model, limits x3 (accepts),
     #          mcp: exa (accept), chrome-devtools (accept)
-    answers = ["a", "", "", "", "", "", "", "", "", ""]
+    answers = ["", "a", "", "", "", "", "", "", "", "", ""]
     try:
         r = _run_interactive(answers, agent_dir=agent, cons=_quiet_console(),
                              config_remote="file:///nonexistent", config_ref="main")
@@ -586,7 +589,7 @@ def test_doctor_missing_everything(tmpdir):
     cons, text = _capture_console()
     rc = setup_mod.doctor(agent_dir=agent, cons=cons)
     assert rc == 1
-    assert "config repo" in text() and "no lemonade credentials" in text()
+    assert "config repo" in text() and "no provider credentials" in text()
     print("  PASS\n")
 
 
@@ -696,7 +699,7 @@ def test_lpbconfig_check_runs_doctor(tmpdir):
     cons, text = _capture_console()
     rc = lc.cmd_check(agent_dir=agent, cons=cons)
     assert rc == 1                       # no credentials
-    assert "no lemonade credentials" in text()
+    assert "no provider credentials" in text()
     print("  PASS\n")
 
 
@@ -707,6 +710,209 @@ def test_lpbconfig_memory_setup_delegates(tmpdir):
     assert rc == 0
     mem = json.loads((agent / "lpb-memory-config.json").read_text())
     assert mem["llmModelOverride"] == "qwen3.5-9b-FLM"
+    print("  PASS\n")
+
+
+
+# ─── Strixite flavor (OpenAI-compatible, models.json wiring) ─────────────────
+
+STRIXITE_MODELS = {"data": [
+    {"id": "qwen3.8-flash-next", "object": "model", "context_length": 262144},
+    {"id": "qwen3.6-35b-a3b"},
+]}
+
+
+def _http_ok_strixite(url, timeout=8.0, api_key=""):
+    if url.endswith("/v1/models"):
+        return STRIXITE_MODELS
+    raise AssertionError(f"unexpected url {url}")
+
+
+def test_probe_strixite_endpoints(tmpdir):
+    """Strixite probes /v1/models (OpenAI shape) and has no health endpoint."""
+    seen = []
+
+    def spy(url, timeout=8.0, api_key=""):
+        seen.append(url)
+        return _http_ok_strixite(url, timeout, api_key)
+
+    orig = setup_mod._http_get_json
+    setup_mod._http_get_json = spy
+    try:
+        r = setup_mod.probe_server("http://h:8000/v1", "", provider="strixite")
+    finally:
+        setup_mod._http_get_json = orig
+    assert r.ok
+    assert [m["id"] for m in r.models] == ["qwen3.8-flash-next", "qwen3.6-35b-a3b"]
+    # context_length is what strixite reports; it becomes the entry's contextWindow
+    assert r.models[0]["ctx"] == 262144 and r.models[1]["ctx"] is None
+    assert seen == ["http://h:8000/v1/models"]
+    print("  PASS\n")
+
+
+def test_wizard_noninteractive_strixite(tmpdir):
+    remote, _ = _bare_remote(tmpdir, "config", "dev")
+    agent = _make_agent_dir(tmpdir)
+    orig = setup_mod._http_get_json
+    setup_mod._http_get_json = _http_ok_strixite
+    try:
+        r = setup_mod.run_wizard(agent_dir=agent, cons=_quiet_console(),
+                                 interactive=False, provider="strixite",
+                                 default_base_url="http://127.0.0.1:8000/v1",
+                                 config_remote=str(remote), config_ref="dev")
+    finally:
+        setup_mod._http_get_json = orig
+    assert r.ok, r.error
+    assert r.provider == "strixite"
+    assert not (agent / "auth.json").exists()                 # plugin store untouched
+    mj = json.loads((agent / "models.json").read_text())
+    entry = mj["providers"]["strixite"]
+    assert entry["baseUrl"] == "http://127.0.0.1:8000/v1"
+    assert entry["api"] == "openai-completions"
+    assert entry["apiKey"]                                     # pi needs a placeholder
+    assert [m["id"] for m in entry["models"]] == ["qwen3.8-flash-next", "qwen3.6-35b-a3b"]
+    # the wizard writes a pi-ready entry, not a bare id (thinking visible,
+    # real context window, valid effort spellings)
+    served = entry["models"][0]
+    assert served["contextWindow"] == 262144            # from context_length
+    assert served["reasoning"] is True
+    assert served["thinkingLevelMap"] == setup_mod.MODEL_CAPABILITIES["strixite"]["thinkingLevelMap"]
+    assert entry["models"][1]["contextWindow"] == \
+        setup_mod.MODEL_CAPABILITIES["strixite"]["contextWindow"]  # static fallback
+    settings = json.loads((agent / "settings.json").read_text())
+    assert settings["defaultProvider"] == "strixite"
+    assert settings["defaultModel"] == "qwen3.8-flash-next"
+    print("  PASS\n")
+
+
+def test_provider_creds_and_quick_status_strixite(tmpdir):
+    agent = _make_agent_dir(tmpdir)
+    (agent / "models.json").write_text(json.dumps({"providers": {"strixite": {
+        "baseUrl": "http://h:8000/v1", "api": "openai-completions",
+        "apiKey": "strixite", "models": [{"id": "qwen3.8-flash-next"}]}}}))
+    (agent / "settings.json").write_text(json.dumps(
+        {"defaultProvider": "strixite", "defaultModel": "qwen3.8-flash-next"}))
+    assert setup_mod.configured_provider(agent) == "strixite"
+    assert setup_mod.provider_creds(agent, "strixite") == ("http://h:8000", "strixite")
+    orig = setup_mod._http_get_json
+    setup_mod._http_get_json = _http_ok_strixite
+    try:
+        status, msg = setup_mod.quick_status(agent)
+    finally:
+        setup_mod._http_get_json = orig
+    assert status == "ok" and msg.startswith("strixite/qwen3.8-flash-next"), msg
+    print("  PASS\n")
+
+
+def test_strixite_doctor_healthy(tmpdir):
+    remote, _ = _bare_remote(tmpdir, "config", "dev")
+    agent = _make_agent_dir(tmpdir)
+    orig = setup_mod._http_get_json
+    setup_mod._http_get_json = _http_ok_strixite
+    try:
+        r = setup_mod.run_wizard(agent_dir=agent, cons=_quiet_console(),
+                                 interactive=False, provider="strixite",
+                                 default_base_url="http://h:8000",
+                                 config_remote=str(remote), config_ref="dev")
+        assert r.ok, r.error
+        cons, text = _capture_console()
+        rc = setup_mod.doctor(agent_dir=agent, cons=cons)
+        assert rc == 0, text()
+        assert "strixite" in text()
+        assert "capabilities match the server" in text()
+    finally:
+        setup_mod._http_get_json = orig
+    print("  PASS\n")
+
+
+def test_strixite_doctor_flags_missing_capabilities(tmpdir):
+    """A bare models.json entry (older stack) is reported, not silently accepted."""
+    remote, _ = _bare_remote(tmpdir, "config", "dev")
+    agent = _make_agent_dir(tmpdir)
+    orig = setup_mod._http_get_json
+    setup_mod._http_get_json = _http_ok_strixite
+    try:
+        r = setup_mod.run_wizard(agent_dir=agent, cons=_quiet_console(),
+                                 interactive=False, provider="strixite",
+                                 default_base_url="http://h:8000",
+                                 config_remote=str(remote), config_ref="dev")
+        assert r.ok, r.error
+        mj = json.loads((agent / "models.json").read_text())
+        mj["providers"]["strixite"]["models"] = [{"id": "qwen3.8-flash-next"}]
+        (agent / "models.json").write_text(json.dumps(mj))
+        cons, text = _capture_console()
+        rc = setup_mod.doctor(agent_dir=agent, cons=cons)
+        assert rc == 0, text()                      # a warning, not a failure
+        assert "without capabilities" in text()
+    finally:
+        setup_mod._http_get_json = orig
+    print("  PASS\n")
+
+
+def test_models_json_merge_preserves_other_providers(tmpdir):
+    agent = _make_agent_dir(tmpdir)
+    (agent / "models.json").write_text(json.dumps({
+        "providers": {"ollama": {"baseUrl": "http://localhost:11434/v1",
+                                 "models": [{"id": "llama"}]}},
+        "other": 1}))
+    ok = setup_mod.write_models_json_provider(
+        agent, "strixite", "http://h:8000", "", [{"id": "m"}], _quiet_console())
+    assert ok
+    data = json.loads((agent / "models.json").read_text())
+    assert data["other"] == 1 and "ollama" in data["providers"]
+    entry = data["providers"]["strixite"]
+    assert entry["api"] == "openai-completions"
+    # capabilities are written, not just the id — pi would otherwise show the
+    # model as thinking-off with a 128k default context
+    assert entry["models"] == [dict({"id": "m"}, **setup_mod.MODEL_CAPABILITIES["strixite"])]
+    # offline rewrite (no models) updates the URL and keeps the model list
+    ok = setup_mod.write_models_json_provider(
+        agent, "strixite", "http://h:8001", "k", [], _quiet_console())
+    assert ok
+    data = json.loads((agent / "models.json").read_text())
+    assert data["providers"]["strixite"]["baseUrl"] == "http://h:8001/v1"
+    assert data["providers"]["strixite"]["apiKey"] == "k"
+    assert data["providers"]["strixite"]["models"] == [
+        dict({"id": "m"}, **setup_mod.MODEL_CAPABILITIES["strixite"])]
+    print("  PASS\n")
+
+
+def test_models_json_capabilities_and_user_overrides(tmpdir):
+    """Server context_length wins; hand-tuned keys survive a re-run."""
+    agent = _make_agent_dir(tmpdir)
+    caps = setup_mod.MODEL_CAPABILITIES["strixite"]
+    ok = setup_mod.write_models_json_provider(
+        agent, "strixite", "http://h:8000", "", [{"id": "qwen", "ctx": 131072}],
+        _quiet_console())
+    assert ok
+    data = json.loads((agent / "models.json").read_text())
+    model = data["providers"]["strixite"]["models"][0]
+    assert model["contextWindow"] == 131072          # server-reported, not static
+    assert model["reasoning"] is True and "image" in model["input"]
+    assert model["thinkingLevelMap"]["off"] == "none"  # the opt-out spelling
+    # strixite's ChatML renderer 400s on role "developer", which pi uses for
+    # reasoning models unless told otherwise
+    assert model["compat"]["supportsDeveloperRole"] is False
+    # user tunes maxTokens down, then re-runs setup with the same probe
+    model["maxTokens"] = 4096
+    model["samplingParams"] = {"temperature": 0.6}
+    (agent / "models.json").write_text(json.dumps(data))
+    ok = setup_mod.write_models_json_provider(
+        agent, "strixite", "http://h:8000", "", [{"id": "qwen", "ctx": 131072}],
+        _quiet_console())
+    assert ok
+    again = json.loads((agent / "models.json").read_text())["providers"]["strixite"]["models"][0]
+    assert again["maxTokens"] == 4096                       # user value kept
+    assert again["samplingParams"] == {"temperature": 0.6}  # unknown key kept
+    assert again["contextWindow"] == 131072 and again["reasoning"] is True
+    assert again["thinkingLevelMap"] == caps["thinkingLevelMap"]
+    # a restart with a smaller -c must not leave pi over the real window
+    again = setup_mod.models_json_model(
+        "strixite", {"id": "qwen", "ctx": 32768},
+        dict(again, contextWindow=262144))
+    assert again["contextWindow"] == 32768
+    # providers without capabilities keep the bare entry (e.g. ollama)
+    assert setup_mod.models_json_model("ollama", {"id": "x"}) == {"id": "x"}
     print("  PASS\n")
 
 

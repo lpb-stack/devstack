@@ -28,11 +28,16 @@ If a value from `.env` doesn't seem to apply, check shell env first:
 | `LPB_BROWSER_DIR` | `~/.lpb-stack/agent-browser` | Host dir for browser profiles & sessions |
 | `LPB_CONTAINER_NAME` | `lpb-stack` | Container name (set in `lpb.stack.env`) |
 | `LPB_IMAGE_CLI` / `LPB_IMAGE_WEB` | `ghcr.io/lpb-stack/devstack:dev-{cli,web}` | Last-resort fallback images (forks repoint these) |
+| `LPB_MODEL_PROVIDER` | `lemonade` | Model provider flavor selected by the setup wizard: `lemonade` or `strixite` (both local OpenAI-compatible servers) |
 | `LPB_LEMONADE_BASE_URL` | `http://127.0.0.1:13305/v1` | Lemonade server URL — passed to the container; on a first boot (`--ssh`/`--web`) the launcher health-checks it and prompts for the real host if unreachable |
 | `LPB_LEMONADE_API_KEY` | `lemonade` | Lemonade API key — passed to the container for the first-boot setup wizard |
+| `LPB_STRIXITE_BASE_URL` | `http://127.0.0.1:8000/v1` | Strixite server URL (podman instance exposing the OpenAI-compatible API) |
+| `LPB_STRIXITE_API_KEY` | *(empty)* | Strixite API key — none needed; the wizard writes a placeholder for pi |
 | `GHCR_USERNAME` | `lpb-stack` | Registry user for pulls |
 
-(The bare `LEMONADE_BASE_URL` / `LEMONADE_API_KEY` names are also accepted on the host; the `LPB_` form wins.)
+(The bare `LEMONADE_BASE_URL` / `LEMONADE_API_KEY` / `STRIXITE_BASE_URL` /
+`STRIXITE_API_KEY` names are also accepted on the host; the `LPB_` form
+wins.)
 
 ## Runtime Defaults (baked into the image via `lpb.conf.env`)
 
@@ -41,7 +46,9 @@ If a value from `.env` doesn't seem to apply, check shell env first:
 | `LPB_ED_PORT` | `3000` | VSCodium port |
 | `LPB_EDITOR_HOST` | `0.0.0.0` | Editor listen host (`127.0.0.1` for local-only) |
 | `LPB_CONNECTION_TOKEN` | *(random per start)* | OpenVSCode token — set for a stable token |
+| `LPB_MODEL_PROVIDER` | `lemonade` | Setup-wizard provider flavor (`lemonade` \| `strixite`) |
 | `LPB_LEMONADE_BASE_URL` | `http://127.0.0.1:13305/v1` | Local model server endpoint |
+| `LPB_STRIXITE_BASE_URL` | `http://127.0.0.1:8000/v1` | Strixite model server endpoint |
 | `LPB_AGENT_BROWSER_SESSION` | `$PI_WORKTREE_ID` | Browser session isolation id |
 | `LPB_AGENT_BROWSER_MAX_OUTPUT` | `4000` | Max chars for browser snapshot output |
 | `LPB_AGENT_BROWSER_ARGS` | `--no-sandbox,…` | Chrome launch args |
@@ -65,6 +72,7 @@ If a value from `.env` doesn't seem to apply, check shell env first:
 | `LPB_EXA_API_KEY` | Exa MCP server (web search) |
 | `LPB_CONTEXT7_API_KEY` | Context7 MCP server (higher rate limits) |
 | `LPB_LEMONADE_API_KEY` | Lemonade server API key — first-run setup wizard (`lpb-config setup`); a placeholder is fine for local servers |
+| `LPB_STRIXITE_API_KEY` | Strixite server key — the server is keyless; pi still needs a placeholder, which the wizard writes |
 
 ## The `LPB_` Bridge (container boot)
 
@@ -78,6 +86,8 @@ priority: shell env > `LPB_` > container-safe fallback):
 | `LPB_CONTEXT7_API_KEY` | `CONTEXT7_API_KEY` | Context7 MCP server |
 | `LPB_LEMONADE_BASE_URL` | `LEMONADE_BASE_URL` | Lemonade provider + setup wizard |
 | `LPB_LEMONADE_API_KEY` | `LEMONADE_API_KEY` | Lemonade provider + setup wizard |
+| `LPB_STRIXITE_BASE_URL` | `STRIXITE_BASE_URL` | Strixite provider + setup wizard |
+| `LPB_STRIXITE_API_KEY` | `STRIXITE_API_KEY` | Strixite provider + setup wizard |
 | `LPB_OPENROUTER_BASE_URL` | `OPENROUTER_BASE_URL` | Optional overflow provider |
 | `LPB_CONNECTION_TOKEN` | `CONNECTION_TOKEN` | OpenVSCode |
 | `LPB_EDITOR_HOST` | `HOST` | OpenVSCode |
@@ -96,7 +106,7 @@ So setting `LPB_EXA_API_KEY` in your project `.env` is sufficient —
 
 | Variable | dev profile | main profile | Meaning |
 |---|---|---|---|
-| `LPB_PI_VERSION` | `0.85.1` | `0.85.1` | Mainstream pi npm version installed in the image (`@earendil-works/pi-coding-agent`) |
+| `LPB_PI_VERSION` | `1.2.0` | `1.2.0` | Mainstream pi npm version installed in the image (`@earendil-works/pi-coding-agent`) |
 | `LPB_CONFIG_REF` | `dev` | `main` | Config preset branch baked into the image |
 
 These select **what goes into the image** (build time) and which pipeline
@@ -111,8 +121,10 @@ These select **what goes into the image** (build time) and which pipeline
 | `AGENT_DIR` | Config repo directory (`~/.pi/agent`) |
 | `PI_CODING_AGENT_DIR` | Same dir, as Pi expects it |
 | `LPB_AGENT_GIT` | Extension clones dir (default `$AGENT_DIR/git/github.com/lpb-stack`) |
-| `LEMONADE_BASE_URL` | Model API endpoint (`http://127.0.0.1:13305/v1`) |
+| `LEMONADE_BASE_URL` | Lemonade model API endpoint (`http://127.0.0.1:13305/v1`) |
 | `LEMONADE_API_KEY` | Lemonade server API key (bridged from `LPB_LEMONADE_API_KEY`) |
+| `STRIXITE_BASE_URL` | Strixite model API endpoint (`http://127.0.0.1:8000/v1`, bridged from `LPB_STRIXITE_BASE_URL`) |
+| `STRIXITE_API_KEY` | Strixite server key (bridged from `LPB_STRIXITE_API_KEY`) |
 | `AGENT_BROWSER_SESSION` | Browser session isolation id |
 | `AGENT_BROWSER_MAX_OUTPUT` | Max chars for snapshot output |
 

@@ -13,17 +13,18 @@ Usage:
   lpb-config align           — Sync extension pins to latest GitHub tags
   lpb-config setup [--reconfigure] [--non-interactive]
                              Initial setup wizard (shared with 'lpb setup'):
-                             config repo, lemonade provider, default model,
+                             config repo, model provider (lemonade|strixite),
+                             default model,
                              lpb-memory config — every step validated live
   lpb-config check           — Validate the installation (read-only)
 
   lpb-config show [--json]   — All effective runtime settings (model, server,
                              thinking level, MCP servers, pins, memory config)
-  lpb-config models          — List models served by the configured Lemonade server
+  lpb-config models          — List models served by the configured model server
   lpb-config set model <id>  — Set default model (validated against the live server)
   lpb-config set thinking <level> — Set default thinking level
-  lpb-config set base-url <url>   — Set Lemonade server (API key preserved)
-  lpb-config set api-key <key>    — Set Lemonade API key (server preserved)
+  lpb-config set base-url <url>   — Set model server URL (API key preserved)
+  lpb-config set api-key <key>    — Set model server API key (URL preserved)
 
   lpb-config memory show     — Show lpb-memory config
   lpb-config memory setup    — Interactive memory config wizard
@@ -83,14 +84,16 @@ from localpibox.setup import (  # noqa: E402
     AbortError,
     bare_base_url,
     configure_memory,
-    decode_creds,
+    configured_provider,
     doctor as setup_doctor,
-    lemonade_creds,
     load_json_file,
     probe_server,
+    provider_creds,
+    provider_env,
     run_wizard,
+    selected_provider_env,
     write_default_model,
-    write_lemonade_auth,
+    write_provider_config,
 )
 from localpibox.stack.gitutil import _github_token, git  # noqa: E402
 from localpibox.stack.repos import (  # noqa: E402
@@ -600,7 +603,8 @@ def cmd_memory_setup(*, agent_dir: str | Path, non_interactive: bool = False,
 #
 # `lpb-config setup` is the container-side entry point of the SAME wizard
 # that `lpb setup` runs on the host (localpibox.setup.run_wizard): config
-# repo, lemonade provider, default model, lpb-memory config. Every step is
+# repo, model provider (lemonade | strixite), default model, lpb-memory
+# config. Every step is
 # validated live; failures loop (interactive) or abort with a precise error
 # (non-interactive). start.sh runs the non-interactive form as a fallback
 # when the host wizard did not run; the host wizard is primary.
@@ -614,21 +618,23 @@ def cmd_setup(*, agent_dir: str | Path, non_interactive: bool = False,
     current values as defaults — the way to correct a bad configuration.
     """
     agent_dir = Path(agent_dir)
-    creds = lemonade_creds(agent_dir)
-    if creds is not None and not reconfigure and non_interactive:
-        cons.info("Lemonade is already configured.")
+    provider = selected_provider_env() or configured_provider(agent_dir)
+    if provider and not reconfigure and non_interactive:
+        cons.info(f"{provider.capitalize()} is already configured.")
         cons.info("Re-run with 'lpb-config setup --reconfigure' to change server or model.")
         return 0
 
+    env_base, env_key = provider_env(provider or "lemonade")
     interactive = not non_interactive and sys.stdin.isatty()
     try:
         result = run_wizard(
             agent_dir=agent_dir,
             cons=cons,
             interactive=interactive,
-            reconfigure=creds is not None,
-            default_base_url=os.environ.get("LEMONADE_BASE_URL", ""),
-            default_api_key=os.environ.get("LEMONADE_API_KEY", ""),
+            reconfigure=bool(provider),
+            provider=provider,
+            default_base_url=env_base,
+            default_api_key=env_key,
             config_remote=os.environ.get("CONFIG_REMOTE", ""),
             config_ref=os.environ.get("CONFIG_REF", "main"),
         )
@@ -656,7 +662,7 @@ def cmd_check(*, agent_dir: str | Path, cons: Console) -> int:
 # ─── Runtime settings: show / models / set ─────────────────────────────────
 #
 # The agent's startup context (AGENTS.md) deliberately carries only stable
-# stack facts. Dynamic runtime values — model, Lemonade endpoint, thinking
+# stack facts. Dynamic runtime values — model, server endpoint, thinking
 # level, MCP servers, memory config — live in rendered files (settings.json,
 # auth.json, mcp.json, lpb-memory-config.json) and are inspected or changed
 # here, so nothing has to be hardcoded in docs or prompts.
@@ -664,12 +670,15 @@ def cmd_check(*, agent_dir: str | Path, cons: Console) -> int:
 THINKING_LEVELS = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
-def _lemonade_state(agent_dir: Path) -> tuple[str, str]:
-    """(baseUrl, apiKey) from auth.json; ('', '') when unconfigured."""
-    entry = lemonade_creds(agent_dir)
-    if entry is None:
-        return "", ""
-    return decode_creds(entry)
+def _provider_state(agent_dir: Path) -> tuple[str, str, str]:
+    """(provider, baseUrl, apiKey) from the active provider's store
+    (auth.json for plugin flavors, models.json for pi-native ones);
+    ('', '', '') when unconfigured."""
+    provider = configured_provider(agent_dir)
+    if not provider:
+        return "", "", ""
+    base, key = provider_creds(agent_dir, provider)
+    return provider, base, key
 
 
 def _config_repo_line(agent_dir: Path) -> str:
@@ -685,7 +694,7 @@ def cmd_show(agent_dir: str | Path, cons: Console, *, as_json: bool = False) -> 
     """Show all effective runtime settings (agent-readable; --json for machines)."""
     agent_dir = Path(agent_dir)
     settings = load_json_file(agent_dir / "settings.json") or {}
-    base, key = _lemonade_state(agent_dir)
+    provider, base, key = _provider_state(agent_dir)
 
     mcp: dict[str, bool] = {}
     mcp_cfg = load_json_file(agent_dir / "mcp.json")
@@ -697,7 +706,7 @@ def cmd_show(agent_dir: str | Path, cons: Console, *, as_json: bool = False) -> 
 
     probe = None
     if base:
-        probe = probe_server(base, key, timeout=4.0)
+        probe = probe_server(base, key, timeout=4.0, provider=provider)
 
     if as_json:
         data = {
@@ -706,7 +715,7 @@ def cmd_show(agent_dir: str | Path, cons: Console, *, as_json: bool = False) -> 
             "provider": settings.get("defaultProvider"),
             "model": settings.get("defaultModel"),
             "thinkingLevel": settings.get("defaultThinkingLevel"),
-            "lemonade": {
+            (provider or "lemonade"): {
                 "baseUrl": base or None,
                 "keySet": bool(key),
                 "reachable": bool(probe and probe.ok),
@@ -740,9 +749,10 @@ def cmd_show(agent_dir: str | Path, cons: Console, *, as_json: bool = False) -> 
             server = f"NOT reachable ({probe.error})"
         else:
             server = "not probed"
-        cons.info(f"  Lemonade server:  {base} (key {'set' if key else 'MISSING'}) — {server}")
+        cons.info(f"  {(provider or 'lemonade').capitalize()} server:  "
+                  f"{base} (key {'set' if key else 'MISSING'}) — {server}")
     else:
-        cons.warn("  Lemonade server:  not configured (lpb-config setup, or set base-url + api-key)")
+        cons.warn("  Server:  not configured (lpb-config setup, or set base-url + api-key)")
     if mcp:
         on = [n for n, e in mcp.items() if e]
         off = [n for n, e in mcp.items() if not e]
@@ -772,14 +782,14 @@ def _pinned_summary(settings: dict) -> dict[str, str]:
 
 
 def cmd_models(agent_dir: str | Path, cons: Console) -> int:
-    """List the models served by the configured Lemonade server."""
+    """List the models served by the configured model server."""
     agent_dir = Path(agent_dir)
-    base, key = _lemonade_state(agent_dir)
+    provider, base, key = _provider_state(agent_dir)
     if not base:
-        cons.error("No Lemonade server configured.")
+        cons.error("No model server configured.")
         cons.info("Set one with: lpb-config set base-url <url>  (and: lpb-config set api-key <key>)")
         return 1
-    res = probe_server(base, key, timeout=8.0)
+    res = probe_server(base, key, timeout=8.0, provider=provider)
     if not res.ok:
         cons.error(f"Server check failed: {res.error}")
         cons.info(f"  endpoint: {base}")
@@ -802,10 +812,10 @@ def cmd_models(agent_dir: str | Path, cons: Console) -> int:
 
 
 def _report_probe(agent_dir: Path, cons: Console) -> None:
-    base, key = _lemonade_state(agent_dir)
+    provider, base, key = _provider_state(agent_dir)
     if not base:
         return
-    res = probe_server(base, key, timeout=8.0)
+    res = probe_server(base, key, timeout=8.0, provider=provider)
     if res.ok:
         cons.info(f"  ✓ server reachable — {len(res.models)} model(s) at {base}")
     else:
@@ -815,15 +825,16 @@ def _report_probe(agent_dir: Path, cons: Console) -> None:
 def cmd_set_model(agent_dir: str | Path, model: str, cons: Console) -> int:
     """Set the default model in settings.json (validated live when reachable)."""
     agent_dir = Path(agent_dir)
-    base, key = _lemonade_state(agent_dir)
+    provider, base, key = _provider_state(agent_dir)
     if base:
-        res = probe_server(base, key, timeout=8.0)
+        res = probe_server(base, key, timeout=8.0, provider=provider)
         if res.ok and model not in {m["id"] for m in res.models}:
             cons.warn(f"  ⚠ '{model}' is not in the server's model list ({len(res.models)} models).")
             cons.warn("    Setting it anyway — check 'lpb-config models' for valid IDs.")
     else:
-        cons.warn("  ⚠ no Lemonade server configured — model not validated live.")
-    if not write_default_model(agent_dir, model, cons):
+        cons.warn("  ⚠ no model server configured — model not validated live.")
+    if not write_default_model(agent_dir, model, cons,
+                               provider=provider or "lemonade"):
         return 1
     cons.info("Apply: start a new session (/new) or restart Pi")
     return 0
@@ -844,14 +855,15 @@ def cmd_set_thinking(agent_dir: str | Path, level: str, cons: Console) -> int:
 
 
 def cmd_set_base_url(agent_dir: str | Path, url: str, cons: Console) -> int:
-    """Set the Lemonade server URL in auth.json (API key preserved)."""
+    """Set the model server URL in the active provider's store (key preserved)."""
     agent_dir = Path(agent_dir)
     base = bare_base_url(url)
     if not base:
         cons.error(f"Invalid URL: {url!r}")
         return 1
-    _old_base, key = _lemonade_state(agent_dir)
-    if not write_lemonade_auth(agent_dir, base, key, cons):
+    provider, _old_base, key = _provider_state(agent_dir)
+    provider = provider or "lemonade"
+    if not write_provider_config(agent_dir, provider, base, key, cons):
         return 1
     _report_probe(agent_dir, cons)
     cons.info("Apply: start a new session (/new) or restart Pi")
@@ -859,14 +871,14 @@ def cmd_set_base_url(agent_dir: str | Path, url: str, cons: Console) -> int:
 
 
 def cmd_set_api_key(agent_dir: str | Path, key: str, cons: Console) -> int:
-    """Set the Lemonade API key in auth.json (server URL preserved)."""
+    """Set the model server API key in the active provider's store (URL preserved)."""
     agent_dir = Path(agent_dir)
-    base, _old_key = _lemonade_state(agent_dir)
+    provider, base, _old_key = _provider_state(agent_dir)
     if not base:
-        cons.error("No Lemonade server configured yet — set the URL first:")
+        cons.error("No model server configured yet — set the URL first:")
         cons.info("  lpb-config set base-url <url>")
         return 1
-    if not write_lemonade_auth(agent_dir, base, key, cons):
+    if not write_provider_config(agent_dir, provider, base, key, cons):
         return 1
     _report_probe(agent_dir, cons)
     cons.info("Apply: start a new session (/new) or restart Pi")
@@ -933,9 +945,9 @@ def main(argv: list[str] | None = None) -> int:
         "Initial setup wizard (shared with 'lpb setup'): provider, model, memory",
     )
     p_setup.add_argument("--reconfigure", action="store_true",
-                         help="reconfigure even if lemonade is already set up")
+                         help="reconfigure even if a provider is already set up")
     p_setup.add_argument("--non-interactive", action="store_true",
-                         help="no prompts (LEMONADE_BASE_URL/LEMONADE_API_KEY env + defaults)")
+                         help="no prompts (LPB_MODEL_PROVIDER + <PROVIDER>_BASE_URL/_API_KEY env + defaults)")
     _add_subparser(sub, "check", "Validate the installation (read-only checklist)")
 
     # Runtime settings (agent-readable state + non-interactive amends)
@@ -943,7 +955,7 @@ def main(argv: list[str] | None = None) -> int:
         sub, "show", "Show all effective runtime settings (model, server, thinking, MCP, memory)")
     p_show.add_argument("--json", action="store_true", help="machine-readable output")
     _add_subparser(
-        sub, "models", "List models served by the configured Lemonade server")
+        sub, "models", "List models served by the configured model server")
     p_set = _add_subparser(
         sub, "set", "Change a runtime setting (model | thinking | base-url | api-key)")
     set_sub = p_set.add_subparsers(dest="set_command")
@@ -951,9 +963,9 @@ def main(argv: list[str] | None = None) -> int:
     p_set_model.add_argument("model")
     p_set_thinking = _add_subparser(set_sub, "thinking", "Set the default thinking level")
     p_set_thinking.add_argument("level", choices=list(THINKING_LEVELS))
-    p_set_url = _add_subparser(set_sub, "base-url", "Set the Lemonade server URL (API key preserved)")
+    p_set_url = _add_subparser(set_sub, "base-url", "Set the model server URL (API key preserved)")
     p_set_url.add_argument("url")
-    p_set_key = _add_subparser(set_sub, "api-key", "Set the Lemonade API key (server URL preserved)")
+    p_set_key = _add_subparser(set_sub, "api-key", "Set the model server API key (server URL preserved)")
     p_set_key.add_argument("key")
 
     # Memory config subcommand

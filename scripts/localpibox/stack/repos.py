@@ -11,8 +11,11 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
+from typing import TextIO
 
+from ..cli import select_one
 from ..log import Console
 
 # ─── Path constants ─────────────────────────────────────────────────────────
@@ -29,6 +32,138 @@ DEFAULT_REF = os.environ.get("CONFIG_REF", "main")
 WORKSPACE_ROOT = Path(os.environ.get("LPB_WORKSPACE_ROOT", "/home/lpb/workspace"))
 AGENT_GIT = Path(os.environ.get(
     "LPB_AGENT_GIT", f"{DEFAULT_AGENT_DIR}/git/github.com/lpb-stack"))
+
+# ─── Devstack checkout discovery ──────────────────────────────────────────
+# The devstack repo is identified by what it CONTAINS, never by the name of
+# its directory: a checkout (or git worktree) may live anywhere under the
+# workspace root — worktree managers routinely give it a random name, e.g.
+# ~/workspace/molly. Matching on the name only made `workspace sync` treat the
+# running checkout as "missing" and try to clone a second devstack beside it.
+DEVSTACK_REPO = "devstack"
+_DEVSTACK_SIGNATURE = Path("scripts/localpibox/stack/workspace.py")
+
+_devstack_override: Path | None = None  # set by --devstack-dir / LPB_DEVSTACK_DIR
+
+
+def set_devstack_dir(path: str | Path | None) -> None:
+    """Pin the devstack checkout (CLI --devstack-dir); None clears the pin."""
+    global _devstack_override
+    _devstack_override = Path(path).expanduser() if path else None
+
+
+def is_devstack_checkout(path: Path) -> bool:
+    """True when *path* holds a devstack checkout (content, not directory name)."""
+    return ((path / "VERSION").is_file()
+            and (path / _DEVSTACK_SIGNATURE).is_file())
+
+
+def devstack_dirs(workspace_root: Path | None = None) -> list[Path]:
+    """Every devstack checkout visible, best candidate first (deduped).
+
+    Order: explicit pin (--devstack-dir / LPB_DEVSTACK_DIR), the checkout this
+    code runs from (when it is the workspace one), the conventional
+    $WORKSPACE_ROOT/devstack, then any other directory under the workspace
+    root. With nothing in the workspace at all, the checkout this code runs
+    from is still the answer — that is the host install (~/.lpb-stack/devstack).
+    """
+    root = Path(workspace_root) if workspace_root is not None else WORKSPACE_ROOT
+    pinned = _devstack_override or os.environ.get("LPB_DEVSTACK_DIR")
+    found: list[Path] = []
+
+    def add(candidate: Path | None) -> None:
+        if candidate is None or not is_devstack_checkout(Path(candidate)):
+            return
+        here = Path(candidate)
+        if any(_same_dir(here, seen) for seen in found):
+            return
+        found.append(here)
+
+    add(Path(pinned).expanduser() if pinned else None)
+    if _inside(_DEVSTACK_ROOT, root):
+        add(_DEVSTACK_ROOT)
+    add(root / DEVSTACK_REPO)
+    try:
+        children = sorted(root.iterdir()) if root.is_dir() else []
+    except OSError:
+        children = []
+    for child in children:
+        add(child)
+    if not found:
+        add(_DEVSTACK_ROOT)
+    return found
+
+
+def _same_dir(a: Path, b: Path) -> bool:
+    """Same directory, following symlinks; falls back to the literal path."""
+    try:
+        return a.resolve() == b.resolve()
+    except OSError:
+        return a == b
+
+
+def _inside(path: Path, root: Path) -> bool:
+    """True when *path* is *root* or below it (compared resolved)."""
+    try:
+        return path.resolve().is_relative_to(root.resolve())
+    except (OSError, AttributeError):
+        return False
+
+
+def in_stack_container() -> bool:
+    """True inside a LocalPibox container.
+
+    The image marks itself with /opt/pi-support (the installed CLIs) and
+    LPB_CONTAINER_NAME. Outside it — a host checkout, a CI runner — the
+    container state (config repo in ~/.pi/agent, extension clones, rendered
+    pins, published model server) simply does not exist, so checks over it are
+    skipped there rather than failed. Override the detection with
+    LPB_STACK_IN_CONTAINER=0/1 (tests, unusual layouts).
+    """
+    env = os.environ.get("LPB_STACK_IN_CONTAINER")
+    if env is not None:
+        return env not in ("", "0", "false", "False")
+    return Path("/opt/pi-support").is_dir() or bool(os.environ.get("LPB_CONTAINER_NAME"))
+
+
+def resolve_devstack_dir(
+    workspace_root: Path | None = None,
+    *,
+    cons: Console | None = None,
+    inp: TextIO | None = None,
+    out: TextIO | None = None,
+) -> Path | None:
+    """The devstack checkout to operate on, or None when there is none (clone).
+
+    Ambiguity is the operator's call, not a guess: with more than one checkout
+    the tool asks, and non-interactively it takes the first candidate
+    (see devstack_dirs) and says so — --devstack-dir pins it explicitly.
+    """
+    dirs = devstack_dirs(workspace_root)
+    pinned = _devstack_override or os.environ.get("LPB_DEVSTACK_DIR")
+    if pinned and not any(_same_dir(Path(pinned).expanduser(), d) for d in dirs):
+        if cons is not None:
+            cons.error(f"  devstack: {pinned} is not a devstack checkout "
+                       "(needs VERSION + scripts/localpibox/stack/)")
+        return None
+    if not dirs:
+        return None
+    if len(dirs) == 1:
+        return dirs[0]
+    if _devstack_override or os.environ.get("LPB_DEVSTACK_DIR"):
+        return dirs[0]                     # the pin is first in the list
+    if cons is not None:
+        if inp is None and not sys.stdin.isatty():
+            cons.warn(f"  devstack: {len(dirs)} checkouts, using {dirs[0]} — "
+                      "pass --devstack-dir to pick another")
+            return dirs[0]
+        choice = Path(select_one(
+            "Multiple devstack checkouts found — which one?",
+            [str(d) for d in dirs], default_index=0, inp=inp, out=out))
+        if choice != dirs[0]:
+            cons.info(f"  devstack: using {choice}")
+        return choice
+    return dirs[0]
+
 
 MIGRATE_KEEP = {".initialized", "ssh-host-keys", "gh-config", "agent"}
 
@@ -109,9 +244,15 @@ def git_extension_pin(pkg: object) -> str | None:
 
 
 def repo_path(name: str) -> Path:
-    """Local path where stack repo *name* lives (workspace root or agent dir)."""
+    """Local path where stack repo *name* lives (workspace root or agent dir).
+
+    The devstack entry is found by content, not by directory name — the
+    checkout may be called anything (see devstack_dirs).
+    """
     if name == CONFIG_REPO[0]:
         return Path(DEFAULT_AGENT_DIR)
+    if name == DEVSTACK_REPO:
+        return resolve_devstack_dir() or (WORKSPACE_ROOT / DEVSTACK_REPO)
     return WORKSPACE_ROOT / name
 
 MEMORY_CONFIG_PATH = Path(DEFAULT_AGENT_DIR) / "lpb-memory-config.json"

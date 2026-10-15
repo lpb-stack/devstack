@@ -114,7 +114,7 @@ TOKEN_FILE = CONFIG_DIR / "token"
 
 # ─── Shared setup wizard (localpibox.setup) ──────────────────────────────
 # One wizard for every mode (cli/shell/ssh/web): configures + validates the
-# lemonade provider, default model, and lpb-memory config, writing directly
+# model provider (lemonade | strixite), default model, and lpb-memory config, writing directly
 # into the host state dir (the container's /home/lpb/.pi mount) so the
 # configuration is persisted BEFORE the first container start.
 # The import is guarded: an old install without the localpibox package can
@@ -369,12 +369,17 @@ class Config:
     ssh_pubkey = ""
     ssh_password = ""
     ssh_port = os.environ.get("LPB_SSH_PORT", _conf_cfg.get("LPB_SSH_PORT", "2222"))
-    # Lemonade model server — resolved by the unified setup preflight in
-    # cmd_run (all modes): interactive wizard before the first start, or
-    # static env/lpb.conf.env passthrough. Passed to the container as
-    # LPB_LEMONADE_* for the plugin and the in-container fallback setup.
+    # Model provider (lemonade | strixite — both local OpenAI-compatible
+    # servers) — resolved by the unified setup preflight in cmd_run (all
+    # modes): interactive wizard before the first start, or static
+    # env/lpb.conf.env passthrough. Passed to the container as
+    # LPB_<PROVIDER>_* (+ LPB_MODEL_PROVIDER) for the pi wiring and the
+    # in-container fallback setup.
+    model_provider = ""
     lemonade_base_url = ""
     lemonade_api_key = ""
+    strixite_base_url = ""
+    strixite_api_key = ""
     non_interactive = False   # --non-interactive (no wizard, even on a TTY)
     yes = False               # --yes: skip the --remove confirmation (no sections = all)
     remove_sections = []      # --remove: section names passed as positionals
@@ -1764,14 +1769,20 @@ def _build_run_env(mount_path: str) -> list[str]:
         # would pollute .devstack-env and break future host runs.
         f"LPB_EXA_API_KEY={os.environ.get('LPB_EXA_API_KEY', os.environ.get('EXA_API_KEY', ''))}",
     ]
-    # Lemonade model server — resolved by the unified setup preflight in
+    # Model provider — resolved by the unified setup preflight in
     # cmd_run (all modes): interactive wizard before a fresh start, or
     # static env/lpb.conf.env passthrough. start.sh bridges
-    # LPB_LEMONADE_* → LEMONADE_* for the plugin and the fallback setup.
+    # LPB_<PROVIDER>_* → bare <PROVIDER>_* for the plugin and the fallback setup.
     if cfg.lemonade_base_url:
         env_vars.append(f"LPB_LEMONADE_BASE_URL={cfg.lemonade_base_url}")
     if cfg.lemonade_api_key:
         env_vars.append(f"LPB_LEMONADE_API_KEY={cfg.lemonade_api_key}")
+    if cfg.strixite_base_url:
+        env_vars.append(f"LPB_STRIXITE_BASE_URL={cfg.strixite_base_url}")
+    if cfg.strixite_api_key:
+        env_vars.append(f"LPB_STRIXITE_API_KEY={cfg.strixite_api_key}")
+    if cfg.model_provider:
+        env_vars.append(f"LPB_MODEL_PROVIDER={cfg.model_provider}")
     # GHCR token for image pulls (personal account requires auth)
     ghcr_token = os.environ.get('GHCR_TOKEN') or os.environ.get('GITHUB_TOKEN') or os.environ.get('LPB_GITHUB_TOKEN', '')
     ghcr_username = os.environ.get('GHCR_USERNAME', _conf_cfg.get('GHCR_USERNAME', 'lpb-stack'))
@@ -2149,16 +2160,36 @@ def _config_ref_for_pipeline() -> str:
     return "dev" if tag == "dev" or tag.endswith("-dev") else "main"
 
 
-def _setup_defaults() -> tuple[str, str]:
+def _setup_provider_name() -> str:
+    """Selected model provider: shell env (LPB_ then bare), lpb.conf.env,
+    else lemonade (the historical default)."""
+    name = ((os.environ.get("LPB_MODEL_PROVIDER")
+             or os.environ.get("MODEL_PROVIDER")
+             or _conf_cfg.get("LPB_MODEL_PROVIDER", ""))
+            or "lemonade").strip().lower()
+    return name if name in ("lemonade", "strixite") else "lemonade"
+
+
+def _setup_defaults(provider: str = "") -> tuple[str, str]:
     """(base_url, api_key) defaults for the wizard / env passthrough:
     shell env (LPB_ then bare name), then lpb.conf.env."""
-    base = (os.environ.get("LPB_LEMONADE_BASE_URL")
-            or os.environ.get("LEMONADE_BASE_URL")
-            or _conf_cfg.get("LPB_LEMONADE_BASE_URL", ""))
-    key = (os.environ.get("LPB_LEMONADE_API_KEY")
-           or os.environ.get("LEMONADE_API_KEY")
-           or _conf_cfg.get("LPB_LEMONADE_API_KEY", ""))
+    provider = provider or _setup_provider_name()
+    up = provider.upper()
+    base = (os.environ.get(f"LPB_{up}_BASE_URL")
+            or os.environ.get(f"{up}_BASE_URL")
+            or _conf_cfg.get(f"LPB_{up}_BASE_URL", ""))
+    key = (os.environ.get(f"LPB_{up}_API_KEY")
+           or os.environ.get(f"{up}_API_KEY")
+           or _conf_cfg.get(f"LPB_{up}_API_KEY", ""))
     return base, key
+
+
+def _apply_provider_env(provider: str, base: str, key: str) -> None:
+    """Store resolved provider config on cfg (drives the container env)."""
+    if base:
+        setattr(cfg, f"{provider}_base_url", base)
+    if key:
+        setattr(cfg, f"{provider}_api_key", key)
 
 
 def _agent_dir_for(resolved_state: str) -> Path:
@@ -2200,9 +2231,10 @@ def _setup_preflight(resolved_state: str) -> None:
     those paths sys.exit() in _shell_attach_or_start/_check_existing_session
     before this point.
     """
-    base, key = _setup_defaults()
-    cfg.lemonade_base_url = base
-    cfg.lemonade_api_key = key
+    provider = _setup_provider_name()
+    cfg.model_provider = provider
+    base, key = _setup_defaults(provider)
+    _apply_provider_env(provider, base, key)
     if lpb_setup is None:
         warn("Setup wizard unavailable — skipping initial setup validation.")
         warn("  Re-run install.sh or 'lpb --update' to restore it.")
@@ -2212,11 +2244,11 @@ def _setup_preflight(resolved_state: str) -> None:
     status, msg = lpb_setup.quick_status(agent)
     if status == "ok":
         # Keep the container env in sync with the persisted configuration.
-        creds = lpb_setup.lemonade_creds(agent)
-        if creds:
-            stored_base, stored_key = lpb_setup.decode_creds(creds)
-            cfg.lemonade_base_url = stored_base
-            cfg.lemonade_api_key = stored_key
+        stored = lpb_setup.configured_provider(agent)
+        if stored:
+            cfg.model_provider = stored
+            stored_base, stored_key = lpb_setup.provider_creds(agent, stored)
+            _apply_provider_env(stored, stored_base, stored_key)
         return
 
     # Provider missing or broken.
@@ -2229,6 +2261,7 @@ def _setup_preflight(resolved_state: str) -> None:
         agent_dir=agent,
         cons=LpbConsole(),
         interactive=True,
+        provider=provider,
         default_base_url=base,
         default_api_key=key,
         config_remote=(os.environ.get("LPB_CONFIG_REMOTE")
@@ -2240,10 +2273,9 @@ def _setup_preflight(resolved_state: str) -> None:
         info("Setup aborted — no container started. Re-run 'lpb' to try again.")
         raise DevstackError
     if result.ok and (result.base_url or result.api_key):
-        if result.base_url:
-            cfg.lemonade_base_url = result.base_url
-        if result.api_key:
-            cfg.lemonade_api_key = result.api_key
+        chosen = getattr(result, "provider", "") or provider
+        cfg.model_provider = chosen
+        _apply_provider_env(chosen, result.base_url, result.api_key)
     else:
         warn("Setup did not complete validation — starting anyway.")
         for w in result.warnings:
@@ -2251,10 +2283,10 @@ def _setup_preflight(resolved_state: str) -> None:
 
 
 def cmd_setup():
-    """Run the initial setup wizard on demand (host side, any mode).
+    """Run the initial setup wizard on demand (host side, all launch modes).
 
-    Config repo + lemonade provider + default model + lpb-memory config,
-    all validated live before anything is written.
+    Config repo + model provider (lemonade | strixite) + default model +
+    lpb-memory config, all validated live before anything is written.
     """
     if lpb_setup is None:
         err("setup wizard unavailable",
@@ -2263,12 +2295,15 @@ def cmd_setup():
     resolved_state = resolve_path(cfg.state_dir)
     os.makedirs(resolved_state, exist_ok=True)
     interactive = not cfg.non_interactive and sys.stdin.isatty()
+    provider = _setup_provider_name()
+    base, key = _setup_defaults(provider)
     result = lpb_setup.run_wizard(
         agent_dir=_agent_dir_for(resolved_state),
         cons=LpbConsole(),
         interactive=interactive,
-        default_base_url=_setup_defaults()[0],
-        default_api_key=_setup_defaults()[1],
+        provider=provider,
+        default_base_url=base,
+        default_api_key=key,
         config_remote=(os.environ.get("LPB_CONFIG_REMOTE")
                        or _stack_cfg.get("LPB_CONFIG_FORK", "")),
         config_ref=_config_ref_for_pipeline(),

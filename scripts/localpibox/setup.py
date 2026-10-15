@@ -4,7 +4,8 @@ One setup flow for every mode (cli, shell, ssh, web). The wizard configures
 AND validates the installation before first use:
 
   [1] config repo      — clone/fetch the config repo into the agent dir
-  [2] lemonade server  — URL, validated with a live HTTP probe
+  [2] model provider   — flavor (lemonade | strixite, both OpenAI-compatible
+                         local servers), URL + key, validated with a live probe
   [3] api key          — validated by fetching the model list (auth-aware)
   [4] default model    — picked from the server's live model list
   [5] lpb-memory       — full memory wizard (mode, transport, model, limits)
@@ -52,9 +53,99 @@ from .run import run_cmd
 # ─── Constants ───────────────────────────────────────────────────────────────
 
 DEFAULT_REMOTE = "https://github.com/lpb-stack/config.git"
-DEFAULT_BASE_URL = "http://127.0.0.1:13305"
-DEFAULT_API_KEY = "lemonade"
 _CREDS_TTL_MS = 24 * 60 * 60 * 1000  # matches the plugin's CREDS_TTL_MS
+
+# ─── Provider flavors ────────────────────────────────────────────────────────
+# Every supported model server speaks an OpenAI-compatible API — the flavor
+# key is the reference for everything else: probe endpoints, defaults, and
+# how pi is wired to it:
+#   auth-json   — pi plugin (lemonade-pi-plugin) reads auth.json
+#   models-json — pi-native custom provider via ~/.pi/agent/models.json
+
+@dataclass(frozen=True)
+class ProviderSpec:
+    name: str
+    label: str                 # display name
+    default_base_url: str      # bare http://host:port
+    default_api_key: str       # "" servers still need a placeholder for pi
+    models_path: str           # model list endpoint ({"data": [...]} response)
+    health_path: str | None    # optional loaded-model info
+    wiring: str                # "auth-json" | "models-json"
+
+
+PROVIDERS: dict[str, ProviderSpec] = {
+    "lemonade": ProviderSpec(
+        "lemonade", "Lemonade", "http://127.0.0.1:13305", "lemonade",
+        "/api/v1/models", "/api/v1/health", "auth-json"),
+    "strixite": ProviderSpec(
+        "strixite", "Strixite", "http://127.0.0.1:8000", "strixite",
+        "/v1/models", None, "models-json"),
+}
+PROVIDER_ORDER = ("lemonade", "strixite")
+DEFAULT_PROVIDER = "lemonade"
+
+# Capabilities pi cannot learn from an OpenAI-compat /v1/models reply, written
+# into models.json for "models-json" flavors so pi's picker, compaction and
+# /thinking match the server. Without them pi shows the model as thinking-off
+# (and never sends an opt-out — strixite then thinks anyway), falls back to a
+# 128k context and sends raw "max", which the server rejects. Lemonade needs
+# none of this: its plugin has its own per-model catalog.
+# Wire facts verified against the live server: doc/strixite-integration.md.
+MODEL_CAPABILITIES: dict[str, dict] = {
+    "strixite": {
+        "reasoning": True,
+        "input": ["text", "image"],          # vision verified on the wire
+        "contextWindow": 262144,             # fallback; server context_length wins
+        "maxTokens": 16384,
+        # strixite speaks none|minimal|low|medium|high|xhigh and 400s on "max".
+        # "off" must be an explicit spelling: no field at all = server default,
+        # which is thinking ON.
+        "thinkingLevelMap": {"off": "none", "max": "xhigh"},
+        # Single spelling (reasoning_effort only) — strixite 400s on two
+        # spellings that disagree, so no qwen-style enable_thinking alongside.
+        "compat": {
+            "thinkingFormat": "openai",
+            # pi would otherwise send the system prompt as role "developer"
+            # (its default once reasoning is true); strixite's ChatML renderer
+            # rejects it: "'messages[0].role' is 'developer': Unexpected
+            # message role". Verified live.
+            "supportsDeveloperRole": False,
+        },
+    },
+}
+# Written in this order, for a readable models.json.
+_CAPABILITY_KEYS = ("reasoning", "input", "contextWindow", "maxTokens",
+                    "thinkingLevelMap", "compat")
+
+# Back-compat aliases (lemonade was the only flavor until 1.x).
+DEFAULT_BASE_URL = PROVIDERS["lemonade"].default_base_url
+DEFAULT_API_KEY = PROVIDERS["lemonade"].default_api_key
+
+
+def resolve_provider(name: str = "") -> str:
+    """Canonical flavor key for *name*, '' when unknown/unspecified."""
+    n = (name or "").strip().lower()
+    return n if n in PROVIDERS else ""
+
+
+def provider_spec(name: str = "") -> ProviderSpec:
+    return PROVIDERS[resolve_provider(name) or DEFAULT_PROVIDER]
+
+
+def selected_provider_env() -> str:
+    """Provider requested via env (LPB_MODEL_PROVIDER / MODEL_PROVIDER)."""
+    return resolve_provider(os.environ.get("LPB_MODEL_PROVIDER", "")
+                            or os.environ.get("MODEL_PROVIDER", ""))
+
+
+def provider_env(name: str = "") -> tuple[str, str]:
+    """(base_url, api_key) from the flavor's env vars (bare name wins)."""
+    up = (resolve_provider(name) or DEFAULT_PROVIDER).upper()
+    base = (os.environ.get(f"{up}_BASE_URL", "")
+            or os.environ.get(f"LPB_{up}_BASE_URL", ""))
+    key = (os.environ.get(f"{up}_API_KEY", "")
+           or os.environ.get(f"LPB_{up}_API_KEY", ""))
+    return base, key
 
 # Built-in lpb-memory defaults (used only when the config repo template is
 # unavailable, e.g. offline first boot). Keys mirror the config repo's
@@ -89,7 +180,7 @@ _MCP_SERVER_INFO: dict = {
 
 @dataclass
 class ProbeResult:
-    """Outcome of a live lemonade server probe."""
+    """Outcome of a live model-server probe (flavor-aware endpoints)."""
     ok: bool
     reachable: bool        # any HTTP response (incl. 401) counts
     auth_failed: bool      # 401/403 — server is up, key rejected
@@ -106,6 +197,7 @@ class SetupResult:
     warnings: list = field(default_factory=list)
     error: str = ""          # precise failure + remedy (non-interactive)
     aborted: bool = False    # user aborted — caller must not start
+    provider: str = ""       # configured flavor (lemonade | strixite)
     base_url: str = ""
     api_key: str = ""
     model: str = ""
@@ -130,8 +222,9 @@ def bare_base_url(raw: str) -> str:
     return url.rstrip("/")
 
 
-def server_name(base_url: str) -> str:
-    return urllib.parse.urlparse(base_url).hostname or "Lemonade"
+def server_name(base_url: str, provider: str = "") -> str:
+    return (urllib.parse.urlparse(base_url).hostname
+            or provider_spec(provider).label)
 
 
 def load_json_file(path: Path) -> dict | None:
@@ -190,23 +283,154 @@ def write_lemonade_auth(agent_dir: Path, base_url: str, api_key: str, cons: Cons
         return False
 
 
-def write_default_model(agent_dir: Path, model: str, cons: Console) -> bool:
+def write_default_model(agent_dir: Path, model: str, cons: Console, *,
+                         provider: str = "") -> bool:
     """Set defaultProvider/defaultModel in settings.json (merge, keep user keys)."""
     agent_dir = Path(agent_dir)
+    provider = resolve_provider(provider) or DEFAULT_PROVIDER
     settings = load_json_file(agent_dir / "settings.json")
     if settings is None:
         cons.warn("  ✗ settings.json not found — default model NOT persisted")
         cons.warn("    (config repo templates unavailable — re-run 'lpb setup' once the repo is in place)")
         return False
-    settings["defaultProvider"] = "lemonade"
+    settings["defaultProvider"] = provider
     settings["defaultModel"] = model
     try:
         (agent_dir / "settings.json").write_text(json.dumps(settings, indent=2) + "\n")
-        cons.info(f"  ✓ settings.json — default model lemonade/{model}")
+        cons.info(f"  ✓ settings.json — default model {provider}/{model}")
         return True
     except OSError as e:
         cons.error(f"  ✗ could not write settings.json: {e}")
         return False
+
+
+# ─── models.json wiring (pi-native custom providers) ─────────────────────────
+
+def models_json_path(agent_dir: str | Path) -> Path:
+    return Path(agent_dir) / "models.json"
+
+
+def models_json_provider(agent_dir: str | Path, provider: str = "") -> dict | None:
+    """providers.<flavor> entry from models.json, or None."""
+    p = resolve_provider(provider)
+    if not p:
+        return None
+    data = load_json_file(models_json_path(agent_dir)) or {}
+    entry = (data.get("providers") or {}).get(p)
+    return entry if isinstance(entry, dict) else None
+
+
+def models_json_model(provider: str, model: dict, previous: dict | None = None) -> dict:
+    """One models.json entry for *model* under a pi-native *provider*.
+
+    Capability defaults from MODEL_CAPABILITIES merged over *previous*, the
+    entry already on disk, so hand-tuned keys survive a re-run — except
+    contextWindow, where a live server value always wins: the window is a
+    server fact the operator can change at every restart (-c / --ctx-size),
+    and a stale too-large one makes pi overflow the context at runtime.
+    """
+    caps = dict(MODEL_CAPABILITIES.get(resolve_provider(provider)) or {})
+    ctx = model.get("ctx")
+    if isinstance(ctx, int) and ctx > 0:
+        caps["contextWindow"] = ctx      # what the server actually allocated
+    out: dict = {"id": model["id"]}
+    name = model.get("name")
+    if name and name != model["id"]:
+        out["name"] = name
+    prev = previous or {}
+    for key in _CAPABILITY_KEYS:
+        if key not in caps:
+            continue
+        if key == "contextWindow" and isinstance(ctx, int) and ctx > 0:
+            out[key] = ctx
+        elif isinstance(caps[key], dict):
+            # dict capabilities merge per-key, so a partial entry written by an
+            # older stack still picks up newly-pinned flags (user keys win)
+            merged = {**caps[key], **(prev.get(key) if isinstance(prev.get(key), dict) else {})}
+            out[key] = merged
+        elif key in prev:
+            out[key] = prev[key]
+        else:
+            out[key] = caps[key]
+    for key, value in prev.items():      # unknown hand-added keys survive
+        out.setdefault(key, value)
+    return out
+
+
+def write_models_json_provider(agent_dir: Path, provider: str, base_url: str,
+                               api_key: str, models: list, cons: Console) -> bool:
+    """Register an OpenAI-compatible provider in models.json (merge: other
+    providers and unknown top-level keys are preserved). Entries always get
+    normalized through models_json_model, so a re-run also backfills
+    capabilities into a list written by an older stack; when *models* is empty
+    (server offline) the existing list is kept, not cleared."""
+    spec = provider_spec(provider)
+    agent_dir = Path(agent_dir)
+    path = models_json_path(agent_dir)
+    data = load_json_file(path) or {}
+    providers = data.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        cons.error(f"  ✗ {path}: 'providers' is not an object — refusing to overwrite")
+        return False
+    entry = providers.get(spec.name) if isinstance(providers.get(spec.name), dict) else {}
+    entry["baseUrl"] = f"{bare_base_url(base_url)}/v1"
+    entry["api"] = "openai-completions"
+    entry["apiKey"] = api_key or spec.default_api_key or "unused"
+    previous = {m.get("id"): m for m in (entry.get("models") or [])
+                if isinstance(m, dict) and m.get("id")}
+    targets = models or [{"id": mid} for mid in previous]
+    if targets:
+        entry["models"] = [models_json_model(spec.name, m, previous.get(m["id"]))
+                           for m in targets]
+    providers[spec.name] = entry
+    try:
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2) + "\n")
+        n = len(entry.get("models") or [])
+        cons.info(f"  ✓ models.json — {spec.name} provider at {entry['baseUrl']}"
+                  f" ({n} model(s))")
+        return True
+    except OSError as e:
+        cons.error(f"  ✗ could not write {path}: {e}")
+        return False
+
+
+def provider_creds(agent_dir: str | Path, provider: str = "") -> tuple[str, str]:
+    """Stored (base_url, api_key) for a flavor — auth.json (plugin flavors)
+    or models.json (pi-native flavors). ('', '') when unconfigured."""
+    p = resolve_provider(provider) or DEFAULT_PROVIDER
+    if PROVIDERS[p].wiring == "models-json":
+        entry = models_json_provider(agent_dir, p)
+        if entry and entry.get("baseUrl"):
+            return (bare_base_url(str(entry["baseUrl"])),
+                    str(entry.get("apiKey") or ""))
+        return "", ""
+    creds = lemonade_creds(agent_dir)
+    return decode_creds(creds) if creds else ("", "")
+
+
+def configured_provider(agent_dir: str | Path) -> str:
+    """Flavor actually configured in *agent_dir* (settings preferred),
+    '' when no provider store has usable credentials."""
+    settings = load_json_file(Path(agent_dir) / "settings.json") or {}
+    preferred = resolve_provider(str(settings.get("defaultProvider") or ""))
+    order = ((preferred,) if preferred else ()) + tuple(
+        n for n in PROVIDER_ORDER if n != preferred)
+    for name in order:
+        if any(provider_creds(agent_dir, name)):
+            return name
+    return ""
+
+
+def write_provider_config(agent_dir: Path, provider: str, base_url: str,
+                           api_key: str, cons: Console,
+                           models: list | None = None) -> bool:
+    """Persist the provider entry for a flavor (shape depends on wiring)."""
+    p = resolve_provider(provider) or DEFAULT_PROVIDER
+    if PROVIDERS[p].wiring == "models-json":
+        return write_models_json_provider(agent_dir, p, base_url, api_key,
+                                          models or [], cons)
+    return write_lemonade_auth(agent_dir, base_url, api_key, cons)
 
 
 # ─── Stack version (template __LPB_VERSION__ substitution) ───────────────────
@@ -330,20 +554,24 @@ def _http_get_json(url: str, timeout: float = 8.0, api_key: str = ""):
         return json.loads(res.read().decode())
 
 
-def probe_server(base_url: str, api_key: str = "", timeout: float = 8.0) -> ProbeResult:
-    """Live-probe a lemonade server.
+def probe_server(base_url: str, api_key: str = "", timeout: float = 8.0,
+                 provider: str = "") -> ProbeResult:
+    """Live-probe a model server on the flavor's OpenAI-compatible endpoints.
 
     - any HTTP response (including 401/403) means REACHABLE;
     - 401/403 means AUTH FAILED (the key — or the lack of one — was rejected);
     - connection-level failures mean UNREACHABLE.
-    On success, also fetches /api/v1/health (best effort) to mark loaded models.
+    On success, also fetches the flavor's health endpoint (best effort, when
+    it has one) to mark loaded models.
     """
+    spec = provider_spec(provider)
     base = bare_base_url(base_url)
     if not base:
         return ProbeResult(False, False, False, "no server URL given")
 
     try:
-        data = _http_get_json(f"{base}/api/v1/models", timeout=timeout, api_key=api_key)
+        data = _http_get_json(f"{base}{spec.models_path}", timeout=timeout,
+                              api_key=api_key)
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             return ProbeResult(False, True, True,
@@ -355,19 +583,21 @@ def probe_server(base_url: str, api_key: str = "", timeout: float = 8.0) -> Prob
     items = data.get("data") if isinstance(data, dict) else None
     models = [
         {"id": str(m.get("id", "")), "name": m.get("name"),
-         "ctx": m.get("max_context_window")}
+         # lemonade reports max_context_window, strixite context_length
+         "ctx": m.get("max_context_window") or m.get("context_length")}
         for m in (items or []) if isinstance(m, dict) and m.get("id")
     ]
     loaded: set = set()
-    try:
-        health = _http_get_json(f"{base}/api/v1/health", timeout=min(timeout, 5.0),
-                                api_key=api_key)
-        if isinstance(health, dict):
-            for bm in health.get("all_models_loaded") or []:
-                if isinstance(bm, dict) and bm.get("model_name"):
-                    loaded.add(bm["model_name"])
-    except Exception:
-        pass  # health is optional — only marks models as "loaded"
+    if spec.health_path:
+        try:
+            health = _http_get_json(f"{base}{spec.health_path}",
+                                    timeout=min(timeout, 5.0), api_key=api_key)
+            if isinstance(health, dict):
+                for bm in health.get("all_models_loaded") or []:
+                    if isinstance(bm, dict) and bm.get("model_name"):
+                        loaded.add(bm["model_name"])
+        except Exception:
+            pass  # health is optional — only marks models as "loaded"
     return ProbeResult(True, True, False, "", models, loaded)
 
 
@@ -587,6 +817,7 @@ def run_wizard(
     cons: Console,
     interactive: bool,
     reconfigure: bool = False,
+    provider: str = "",
     default_base_url: str = "",
     default_api_key: str = "",
     config_remote: str = "",
@@ -595,6 +826,9 @@ def run_wizard(
 ) -> SetupResult:
     """Run the initial setup wizard. See module docstring for the steps.
 
+    Provider flavor resolution: explicit *provider*, then LPB_MODEL_PROVIDER,
+    then the stored configuration (interactive only), then lemonade.
+
     Interactive: prompts loop on failure; 'a' = continue anyway (flagged),
     'q' = abort (nothing written, result.aborted). Non-interactive: first
     failure returns ok=False with a precise error, nothing written.
@@ -602,10 +836,13 @@ def run_wizard(
     agent_dir = Path(agent_dir)
     result = SetupResult(ok=False)
     remote = config_remote or os.environ.get("CONFIG_REMOTE", "") or DEFAULT_REMOTE
-    # Caller-provided defaults win; otherwise the env (same names the
-    # container bridges to bare LEMONADE_*).
-    base_env = os.environ.get("LEMONADE_BASE_URL", "") or os.environ.get("LPB_LEMONADE_BASE_URL", "")
-    key_env = os.environ.get("LEMONADE_API_KEY", "") or os.environ.get("LPB_LEMONADE_API_KEY", "")
+    # Caller-provided defaults win; otherwise the flavor's env vars (same
+    # names the container bridges to bare <PROVIDER>_*).
+    env_provider = (resolve_provider(provider) or selected_provider_env()
+                    or configured_provider(agent_dir) or DEFAULT_PROVIDER)
+    base_env, key_env = provider_env(env_provider)
+    provider = env_provider
+    spec = provider_spec(provider)
 
     cons.info("=" * 54)
     cons.info("  LocalPibox initial setup")
@@ -637,10 +874,22 @@ def run_wizard(
         if not repo_ok:
             cons.warn(f"  config repo unavailable — provider will be configured anyway: {detail}")
 
-        # ── [2]+[3] Server URL + API key (validated together) ─────────────
-        base = bare_base_url(default_base_url or base_env) or DEFAULT_BASE_URL
-        key = (default_api_key or key_env or "").strip() or DEFAULT_API_KEY
-        cons.info("[2] Lemonade server")
+        # ── [2] Model provider flavor (choice, then server URL + key) ──────
+        if interactive:
+            provider = _ask_choice(
+                cons, "Model provider (both are local OpenAI-compatible servers):",
+                [(n, PROVIDERS[n].label + (" — pi plugin, thinking + vision"
+                                            if PROVIDERS[n].wiring == "auth-json"
+                                            else " — local model server, pi-native"))
+                 for n in PROVIDER_ORDER],
+                current=provider)
+            if provider != env_provider:
+                # URL/key defaults belong to the other flavor — don't carry.
+                base_env = key_env = default_base_url = default_api_key = ""
+            spec = provider_spec(provider)
+        cons.info(f"[2] {spec.label} server")
+        base = bare_base_url(default_base_url or base_env) or spec.default_base_url
+        key = (default_api_key or key_env or "").strip() or spec.default_api_key
         models: list = []
         loaded: set = set()
         url_skipped = key_skipped = False
@@ -659,15 +908,16 @@ def run_wizard(
                         break
                     base = bare_base_url(val or base)
                     if not base:
-                        cons.warn("  Enter a URL like http://host:13305 (or 'a' to skip validation)")
+                        cons.warn(f"  Enter a URL like http://host:{urllib.parse.urlparse(base or spec.default_base_url).port or 8000} "
+                                  f"(or 'a' to skip validation)")
                         continue
                 cons.info(f"  Checking {base} …")
-                probe = probe_server(base, "", timeout=timeout)
+                probe = probe_server(base, "", timeout=timeout, provider=provider)
                 if not probe.reachable:
                     cons.error(f"  ✗ unreachable: {probe.error}")
                     if not interactive:
-                        return _fail(f"lemonade server unreachable at {base}: {probe.error} "
-                                     f"(is it running? set LEMONADE_BASE_URL or re-run 'lpb setup')")
+                        return _fail(f"{provider} server unreachable at {base}: {probe.error} "
+                                     f"(is it running? set {provider.upper()}_BASE_URL or re-run 'lpb setup')")
                     phase = "url"
                     continue
                 note = " (key required)" if probe.auth_failed else ""
@@ -684,7 +934,7 @@ def run_wizard(
                     cons.warn("  Continuing without key validation")
                     break
                 key = val or key
-            probe = probe_server(base, key, timeout=timeout)
+            probe = probe_server(base, key, timeout=timeout, provider=provider)
             if probe.ok:
                 models, loaded = probe.models, probe.loaded
                 if models:
@@ -695,20 +945,20 @@ def run_wizard(
             if probe.auth_failed:
                 cons.error(f"  ✗ {probe.error}")
                 if not interactive:
-                    return _fail(f"lemonade API key rejected at {base} (HTTP 401/403) "
-                                 f"(set LEMONADE_API_KEY or re-run 'lpb setup')")
+                    return _fail(f"{provider} API key rejected at {base} (HTTP 401/403) "
+                                 f"(set {provider.upper()}_API_KEY or re-run 'lpb setup')")
                 continue
             if not probe.reachable:
                 cons.error(f"  ✗ server no longer reachable: {probe.error}")
                 if not interactive:
-                    return _fail(f"lemonade server unreachable at {base}: {probe.error}")
+                    return _fail(f"{provider} server unreachable at {base}: {probe.error}")
                 phase = "url"
                 continue
             cons.error(f"  ✗ {probe.error}")
             if not interactive:
-                return _fail(f"lemonade server probe failed at {base}: {probe.error}")
+                return _fail(f"{provider} server probe failed at {base}: {probe.error}")
 
-        result.add("lemonade server", not url_skipped,
+        result.add(f"{provider} server", not url_skipped,
                    f"{base} (validated)" if not url_skipped else f"{base} (NOT validated)")
         result.add("api key", not key_skipped,
                    "accepted" if not key_skipped else "NOT validated")
@@ -749,7 +999,7 @@ def run_wizard(
                 cons.info(f"  ✓ {chosen} (auto — loaded model preferred)")
             if chosen and chosen not in loaded:
                 cons.warn(f"  note: {chosen} not reported as loaded by the server yet")
-            result.add("default model", True, f"lemonade/{chosen}")
+            result.add("default model", True, f"{provider}/{chosen}")
 
         # ── [5] lpb-memory ─────────────────────────────────────────────────
         if configure_memory(agent_dir, cons, interactive=interactive,
@@ -775,14 +1025,16 @@ def run_wizard(
 
         # ── [7] Persist + verify ───────────────────────────────────────────
         cons.info("[7] Persisting configuration")
-        persisted = write_lemonade_auth(agent_dir, base, key, cons)
+        persisted = write_provider_config(agent_dir, provider, base, key, cons,
+                                          models=models)
         if chosen:
-            persisted = write_default_model(agent_dir, chosen, cons) and persisted
+            persisted = write_default_model(agent_dir, chosen, cons,
+                                            provider=provider) and persisted
         elif not url_skipped:
             cons.warn("  no default model chosen — settings.json untouched")
 
         if not (url_skipped or key_skipped):
-            final = probe_server(base, key, timeout=min(timeout, 5.0))
+            final = probe_server(base, key, timeout=min(timeout, 5.0), provider=provider)
             if final.ok:
                 cons.info(f"  ✓ final check — server responding"
                           f"{f', {len(final.loaded)} model(s) loaded' if final.loaded else ''}")
@@ -790,6 +1042,7 @@ def run_wizard(
                 cons.warn(f"  final check failed: {final.error} (it responded during setup — re-run 'lpb setup' if this persists)")
 
         result.ok = True
+        result.provider = provider
         result.base_url = base
         result.api_key = key
         result.model = chosen
@@ -808,7 +1061,7 @@ def run_wizard(
         if result.warnings:
             for w in result.warnings:
                 cons.warn(f"  ⚠ {w}")
-        cons.info(f"  Setup complete — lemonade provider "
+        cons.info(f"  Setup complete — {provider} provider "
                   f"{'configured' if persisted else 'partially configured'}")
         cons.info("=" * 54)
         return result
@@ -828,14 +1081,14 @@ def _current_model(agent_dir: Path) -> str:
 def quick_status(agent_dir: str | Path, timeout: float = 3.0) -> tuple[str, str]:
     """Cheap status for the launcher: ('ok'|'broken'|'missing', message)."""
     agent_dir = Path(agent_dir)
-    creds = lemonade_creds(agent_dir)
-    if creds is None:
+    provider = configured_provider(agent_dir)
+    if not provider:
         return "missing", "no model provider configured"
-    base, key = decode_creds(creds)
-    probe = probe_server(base, key, timeout=timeout)
+    base, key = provider_creds(agent_dir, provider)
+    probe = probe_server(base, key, timeout=timeout, provider=provider)
     settings = load_json_file(agent_dir / "settings.json")
     model = (settings or {}).get("defaultModel", "")
-    label = f"lemonade/{model}" if model else "lemonade (no default model set)"
+    label = f"{provider}/{model}" if model else f"{provider} (no default model set)"
     if probe.ok:
         extra = f" — {len(probe.models)} model(s) on server" if probe.models else ""
         return "ok", f"{label} @ {base}{extra}"
@@ -874,7 +1127,7 @@ def doctor(agent_dir: str | Path, cons: Console, *, timeout: float = 5.0,
         provider = settings.get("defaultProvider", "(none)")
         model = settings.get("defaultModel", "(none)")
         if provider and model != "(none)":
-            cons.info(f"  ✓ settings.json    default lemonade/{model} (provider {provider})")
+            cons.info(f"  ✓ settings.json    default {provider}/{model}")
         else:
             cons.error("  ✗ settings.json    present but no default model — run 'lpb setup'")
             critical_ok = False
@@ -908,18 +1161,21 @@ def doctor(agent_dir: str | Path, cons: Console, *, timeout: float = 5.0,
                   "(run 'lpb setup' or 'lpb-config render')")
 
     # [5] provider credentials
-    creds = lemonade_creds(agent_dir)
-    if creds is None:
-        cons.error("  ✗ provider         no lemonade credentials — run 'lpb setup'")
+    provider = configured_provider(agent_dir)
+    if not provider:
+        cons.error("  ✗ provider         no provider credentials "
+                   "(" + "/".join(PROVIDER_ORDER) + ") — run 'lpb setup'")
         if final_line:
             cons.info("=" * 54)
             cons.error("  Setup has problems — see ✗ lines above.")
         return 1
-    base, key = decode_creds(creds)
-    cons.info(f"  ✓ provider         auth.json (server {base})")
+    base, key = provider_creds(agent_dir, provider)
+    store = ("models.json" if PROVIDERS[provider].wiring == "models-json"
+             else "auth.json")
+    cons.info(f"  ✓ provider         {provider} ({store}, server {base})")
 
     # [6] live probe
-    probe = probe_server(base, key, timeout=timeout)
+    probe = probe_server(base, key, timeout=timeout, provider=provider)
     model = (settings or {}).get("defaultModel", "")
     if probe.ok:
         loaded_note = f", {len(probe.loaded)} loaded" if probe.loaded else ""
@@ -935,6 +1191,27 @@ def doctor(agent_dir: str | Path, cons: Console, *, timeout: float = 5.0,
         cons.error(f"  ✗ server           unreachable: {probe.error} — run 'lpb setup' to change host/key")
         critical_ok = False
 
+    # [7] pi-native capabilities (models-json flavors with known quirks)
+    caps = MODEL_CAPABILITIES.get(provider)
+    if caps and probe.ok:
+        entry = models_json_provider(agent_dir, provider) or {}
+        drift = []
+        for m in entry.get("models") or []:
+            if not isinstance(m, dict):
+                continue
+            missing = [k for k in _CAPABILITY_KEYS if k not in m]
+            reported = next((p.get("ctx") for p in probe.models
+                             if p.get("id") == m.get("id")), None)
+            if missing or (reported and m.get("contextWindow") != reported):
+                drift.append(m.get("id"))
+        if drift:
+            # silent misalignment: pi still chats, but shows thinking off, guesses
+            # the context window and may send an effort level the server rejects
+            cons.warn(f"  ⚠ models.json      {', '.join(drift)} without capabilities "
+                      f"(thinking/context) — run 'lpb-config set base-url {base}'")
+        else:
+            cons.info("  ✓ models.json      capabilities match the server")
+
     cons.info("=" * 54)
     if final_line:
         if critical_ok:
@@ -945,10 +1222,16 @@ def doctor(agent_dir: str | Path, cons: Console, *, timeout: float = 5.0,
 
 
 __all__ = [
-    "AbortError", "ProbeResult", "SetupResult",
+    "AbortError", "ProbeResult", "SetupResult", "ProviderSpec",
+    "PROVIDERS", "PROVIDER_ORDER", "MODEL_CAPABILITIES",
     "DEFAULT_BASE_URL", "DEFAULT_API_KEY", "DEFAULT_REMOTE",
+    "DEFAULT_PROVIDER", "resolve_provider", "provider_spec",
+    "selected_provider_env", "provider_env",
     "bare_base_url", "server_name", "load_json_file", "lemonade_creds",
     "decode_creds", "write_lemonade_auth", "write_default_model",
+    "models_json_path", "models_json_provider", "models_json_model",
+    "write_models_json_provider",
+    "provider_creds", "configured_provider", "write_provider_config",
     "resolve_stack_version", "ensure_config_repo", "render_templates",
     "probe_server", "configure_memory", "configure_mcp", "run_wizard", "quick_status", "doctor",
 ]

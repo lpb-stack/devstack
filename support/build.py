@@ -10,6 +10,8 @@ Usage:
   support/build.py cli                  build only the cli image
   support/build.py web                  build only the web image
   support/build.py cli --push           build + push
+  support/build.py --engine podman      force the build engine (auto: podman,
+                                         then docker; LPB_BUILD_ENGINE also works)
 
 The image tags come from lpb.stack.env LPB_IMAGE_CLI / LPB_IMAGE_WEB.
 """
@@ -18,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import datetime
+import os
 import sys
 from pathlib import Path
 
@@ -127,6 +130,26 @@ def build_args(
     ]
 
 
+def detect_engine(explicit: str = "") -> str:
+    """Choose the image build engine: an explicit ``--engine`` wins, then the
+    ``LPB_BUILD_ENGINE`` env var, then podman, then docker (launcher order).
+
+    Returns the bare engine name ("podman" | "docker"); a chosen engine whose
+    binary is missing raises so the build fails with a clear message.
+    """
+    engine = (explicit or os.environ.get("LPB_BUILD_ENGINE", "")).strip().lower()
+    if engine in ("", "auto"):
+        engine = "podman" if which("podman") else ("docker" if which("docker") else "")
+    if not engine:
+        raise RuntimeError(
+            "no container build engine found (podman or docker) — "
+            "install one or pass --engine/--help"
+        )
+    if not which(engine):
+        raise RuntimeError(f"build engine '{engine}' selected but not found on PATH")
+    return engine
+
+
 def build_command(
     target: str,
     image: str,
@@ -135,9 +158,26 @@ def build_command(
     push: bool = False,
     platform: str = "linux/amd64",
     root: str | Path | None = None,
+    engine: str = "docker",
 ) -> list[str]:
-    """Assemble the ``docker buildx build`` command for *target*."""
+    """Assemble the build command for *target* using *engine*.
+
+    docker → ``docker buildx build`` (honors ``--push`` inline).
+    podman → ``podman build`` (push is a separate ``push_command`` step; the
+    build command never carries ``--push``).
+    """
     root = Path(root) if root else ROOT
+    if engine == "podman":
+        cmd = [
+            "podman", "build",
+            "--target", target,
+            "-t", image,
+            "--platform", platform,
+            "-f", str(root / "Dockerfile"),
+        ]
+        cmd += args
+        cmd.append(".")
+        return cmd
     cmd = [
         "docker", "buildx", "build",
         "--target", target,
@@ -152,6 +192,12 @@ def build_command(
     return cmd
 
 
+def push_command(image: str, engine: str = "docker") -> list[str]:
+    """Assemble the post-build push command for *engine* (podman path —
+    docker buildx pushes inline with ``--push``)."""
+    return [engine, "push", image]
+
+
 def main(argv: list[str] | None = None) -> int:
     install_sigpipe_handler()
     parser = argparse.ArgumentParser(prog="build", description=__doc__)
@@ -161,9 +207,20 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--push", action="store_true", help="push images after build")
     parser.add_argument(
+        "--engine", default="", choices=["", "docker", "podman"],
+        help="build engine (default: auto — podman first, then docker;"
+             " LPB_BUILD_ENGINE env also honored)",
+    )
+    parser.add_argument(
         "--root", default=str(ROOT), help="project root containing the env files",
     )
     args = parser.parse_args(argv)
+
+    try:
+        engine = detect_engine(args.engine)
+    except RuntimeError as exc:
+        log.error(f"FATAL: {exc}")
+        return 1
 
     try:
         env = load_build_env(args.root)
@@ -175,12 +232,19 @@ def main(argv: list[str] | None = None) -> int:
     targets = {"all": ["cli", "web"], "cli": ["cli"], "web": ["web"]}[args.target]
     for target in targets:
         image = env["LPB_IMAGE_CLI" if target == "cli" else "LPB_IMAGE_WEB"]
-        cmd = build_command(target, image, build, push=args.push, root=args.root)
-        log.info(f"Building '{target}' -> {image}")
+        cmd = build_command(target, image, build, push=args.push, root=args.root,
+                             engine=engine)
+        log.info(f"Building '{target}' -> {image} ({engine})")
         out, err, code = run_cmd(cmd, timeout=3600, cwd=args.root)
         if code:
-            log.error(err.strip() or out.strip() or f"docker buildx exited {code}")
+            log.error(err.strip() or out.strip() or f"{engine} build exited {code}")
             return code
+        if args.push and engine == "podman":
+            log.info(f"Pushing {image}...")
+            out, err, code = run_cmd(push_command(image, engine), timeout=3600)
+            if code:
+                log.error(err.strip() or out.strip() or f"push exited {code}")
+                return code
         log.done(f"{target}: {image}")
 
     return 0

@@ -128,6 +128,48 @@ def test_build_command_shape(tmpdir):
     assert pushed[-2:] == ["--push", "."]
 
 
+def test_build_command_shape_podman(tmpdir):
+    cmd = build.build_command("cli", "img:cli", ["--build-arg", "X=1"],
+                              root=tmpdir, engine="podman")
+    assert cmd[0] == "podman" and cmd[1] == "build"
+    assert "--target" in cmd and cmd[cmd.index("--target") + 1] == "cli"
+    assert "-t" in cmd and cmd[cmd.index("-t") + 1] == "img:cli"
+    assert "--build-arg" in cmd and "X=1" in cmd
+    assert cmd[-1] == "."
+    # podman build has no --push — push is a separate command
+    pushed = build.build_command("web", "img:web", [], push=True, root=tmpdir,
+                                 engine="podman")
+    assert "--push" not in pushed
+    assert build.push_command("img:web", "podman") == ["podman", "push", "img:web"]
+    assert build.push_command("img:web", "docker") == ["docker", "push", "img:web"]
+
+
+def test_detect_engine(tmpdir):
+    saved = os.environ.get("LPB_BUILD_ENGINE")
+    try:
+        os.environ["LPB_BUILD_ENGINE"] = "podman"
+        # explicit arg beats env; env beats auto-detect (binary may be absent → raise)
+        try:
+            build.detect_engine("docker")
+        except RuntimeError:
+            pass  # docker not installed on this host — fine, explicit wins check below
+        if build.which("podman"):
+            assert build.detect_engine() == "podman"
+            assert build.detect_engine("podman") == "podman"
+        del os.environ["LPB_BUILD_ENGINE"]
+        if not build.which("podman") and not build.which("docker"):
+            try:
+                build.detect_engine()
+                assert False, "should raise when no engine exists"
+            except RuntimeError:
+                pass
+    finally:
+        if saved is None:
+            os.environ.pop("LPB_BUILD_ENGINE", None)
+        else:
+            os.environ["LPB_BUILD_ENGINE"] = saved
+
+
 def main() -> int:
     return run_lpbx_suite("support/build.py tests", globals())
 

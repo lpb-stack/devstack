@@ -5,6 +5,12 @@ For developers working on the stack (workspace + GitHub). Config repo
 management inside the container lives in lpb-config.
 
 Usage:
+  lpb-devstack [--tag dev|main] [--devstack-dir PATH] <command>
+
+  --devstack-dir PATH   devstack checkout to work on. The checkout is found by
+                        content, so its directory name is free (a worktree
+                        named anything works); when the workspace holds more
+                        than one, the command asks — or pin it here.
   lpb-devstack bump [--minor|--major] [--set V] [--no-commit] [--push]
       Bump devstack/VERSION (default: patch, suffix preserved) and commit.
   lpb-devstack tag-repos [--branch dev|main] [--version V] [--dry-run]
@@ -12,7 +18,8 @@ Usage:
   lpb-devstack workspace status
       Show workspace repo branches + alignment.
   lpb-devstack workspace sync
-      Clone/symlink/align/pull workspace repos (the single write path).
+      Clone/symlink/align/pull workspace repos (the single write path). The
+      devstack repo is located by content, not by directory name.
   lpb-devstack validate
       Full stack alignment check (repos, branches, pins, env).
   lpb-devstack release status
@@ -31,6 +38,7 @@ Pipeline detection:
 
 Environment:
   LPB_WORKSPACE_ROOT    — Workspace root (default: /home/lpb/workspace)
+  LPB_DEVSTACK_DIR      — devstack checkout (same as --devstack-dir)
   AGENT_DIR             — Config repo path (default: /home/lpb/.pi/agent)
   LPB_AGENT_GIT         — Extension clone dir (default: $AGENT_DIR/git/github.com/lpb-stack)
   LPB_STACK_REMOTE_BASE — Stack remote base (default: https://github.com/lpb-stack)
@@ -60,7 +68,7 @@ from localpibox.cli import install_sigpipe_handler  # noqa: E402
 from localpibox.log import Console  # noqa: E402
 from localpibox.run import run_cmd  # noqa: E402
 from localpibox.stack.gitutil import git, git_auth  # noqa: E402
-from localpibox.stack.repos import TAG_REPOS  # noqa: E402
+from localpibox.stack.repos import TAG_REPOS, set_devstack_dir  # noqa: E402
 from localpibox.stack.version import (  # noqa: E402
     VERSION_RE,
     _devstack_root_candidates,
@@ -222,7 +230,7 @@ def cmd_tag_repos(cons: Console, *, pipeline: str = "dev",
         # job); do not re-derive via expected_branch() — it would ignore
         # the actual tagging set and fail for repos no longer in the stack.
         b = dev_b if pipeline == "dev" else main_b
-        path = _resolve_repo_path(name)
+        path = _resolve_repo_path(name, cons)
         if path is None:
             cons.error(f"  {name}: no local clone at {_tag_repo_hint(name)} — "
                        f"run 'lpb-devstack workspace sync' / 'lpb-config update' first")
@@ -319,6 +327,7 @@ def main(argv: list[str] | None = None) -> int:
         epilog=(
             "Environment:\n"
             "  LPB_WORKSPACE_ROOT    Workspace root (default: /home/lpb/workspace)\n"
+            "  LPB_DEVSTACK_DIR      devstack checkout (same as --devstack-dir)\n"
             "  AGENT_DIR             Config repo path (default: /home/lpb/.pi/agent)\n"
             "  LPB_AGENT_GIT         Extension clone dir (default: $AGENT_DIR/git/github.com/lpb-stack)\n"
             "  LPB_STACK_REMOTE_BASE Stack remote base (default: https://github.com/lpb-stack)\n"
@@ -331,6 +340,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--tag", default=None,
         help="Override pipeline detection (dev|main)",
+    )
+    parser.add_argument(
+        "--devstack-dir", dest="devstack_dir", metavar="PATH", default=None,
+        help="devstack checkout to operate on (default: detected under "
+             "$LPB_WORKSPACE_ROOT by content, any directory name)",
     )
 
     sub = parser.add_subparsers(dest="command")
@@ -391,6 +405,9 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     cons = Console()
+
+    # Pin the devstack checkout before anything reads VERSION/stack env.
+    set_devstack_dir(args.devstack_dir)
 
     if args.tag is not None and args.tag not in ("dev", "main"):
         cons.error(f"invalid --tag: {args.tag} (expected dev|main)")

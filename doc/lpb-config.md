@@ -26,11 +26,11 @@ see [lpb-devstack reference](lpb-devstack.md).
 | Command | Description |
 |---|---|
 | `lpb-config show [--json]` | All effective runtime settings: provider/model, thinking level, Lemonade server (reachability + model count), MCP servers, extension pins, memory config |
-| `lpb-config models` | List models served by the configured Lemonade server |
+| `lpb-config models` | List models served by the configured model server |
 | `lpb-config set model <id>` | Set the default model — validated against the live server's model list |
 | `lpb-config set thinking <level>` | Set the default thinking level (`off` … `max`) |
-| `lpb-config set base-url <url>` | Set the Lemonade server URL (API key preserved) |
-| `lpb-config set api-key <key>` | Set the Lemonade API key (server preserved) |
+| `lpb-config set base-url <url>` | Set the model server URL (API key preserved) |
+| `lpb-config set api-key <key>` | Set the model server API key (server preserved) |
 | `lpb-config render [--force]` | Regenerate runtime config from the repo templates (`--force` merges: user-added keys survive, template pins win in settings.json) |
 
 ### Align & Pin Sync
@@ -51,9 +51,11 @@ see [lpb-devstack reference](lpb-devstack.md).
 
 | Command | Description |
 |---|---|
-| `lpb-config setup` | The **same wizard** as `lpb setup` on the host: config repo, lemonade provider (auth.json), default model (settings.json), MCP servers (mcp.json), lpb-memory config. Every step is validated live (HTTP probes); failures loop with the error visible. Re-run any time to correct a bad configuration — current values are pre-filled. `--reconfigure` forces a re-run |
-| `lpb-config setup --non-interactive` | Same, no prompts — `LEMONADE_BASE_URL` / `LEMONADE_API_KEY` env + defaults. First failure aborts with a precise error and writes nothing. This is the `start.sh` fallback for boots where the host wizard did not run |
-| `lpb-config check` | Validate the installation (read-only checklist: config repo, settings, credentials, live server probe) — the in-container twin of `lpb doctor` |
+| `lpb-config setup` | The **same wizard** as `lpb setup` on the host: config repo, model provider — lemonade (auth.json) or strixite
+(models.json), default model (settings.json), MCP servers (mcp.json), lpb-memory config. Every step is validated live (HTTP probes); failures loop with the error visible. Re-run any time to correct a bad configuration — current values are pre-filled. `--reconfigure` forces a re-run. For strixite this is also where model capabilities (thinking, vision, context window) get recorded — [Strixite integration](strixite-integration.md) |
+| `lpb-config setup --non-interactive` | Same, no prompts — `LPB_MODEL_PROVIDER` + `<PROVIDER>_BASE_URL` /
+`<PROVIDER>_API_KEY` env + defaults. First failure aborts with a precise error and writes nothing. This is the `start.sh` fallback for boots where the host wizard did not run |
+| `lpb-config check` | Validate the installation (read-only checklist: config repo, settings, credentials, live server probe, pi-native model capabilities) — the in-container twin of `lpb doctor` |
 
 ### Pipeline Override
 
