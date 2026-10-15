@@ -637,8 +637,15 @@ def cmd_setup(*, agent_dir: str | Path, non_interactive: bool = False,
     """
     agent_dir = Path(agent_dir)
     provider = selected_provider_env() or configured_provider(agent_dir)
-    if provider and not reconfigure and non_interactive:
-        cons.info(f"{provider.capitalize()} is already configured.")
+    # "Already configured" means persisted, not merely requested: a fresh
+    # container carries LPB_MODEL_PROVIDER (and <PROVIDER>_* URLs) from the
+    # host .env while auth.json/models.json hold nothing, and start.sh runs
+    # this command precisely because it found no credentials. Trusting the env
+    # var made that fallback reply "configured" and write nothing — rc 0, dead
+    # model, no error. The wizard defaults stay env-driven (as in run_wizard).
+    configured = configured_provider(agent_dir)
+    if configured and not reconfigure and non_interactive:
+        cons.info(f"{configured.capitalize()} is already configured.")
         cons.info("Re-run with 'lpb-config setup --reconfigure' to change server or model.")
         return 0
 

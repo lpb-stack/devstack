@@ -11,6 +11,7 @@ bare repos (testharness._bare_remote)."""
 from __future__ import annotations
 
 import builtins
+import functools
 import io
 import json
 import os
@@ -97,13 +98,62 @@ def _make_agent_dir(tmpdir, *, with_repo=False, with_templates=True):
 
 
 def _env_setup(url="http://192.168.0.13:13305/v1", key="lemony"):
+    # Provider selection leaks in from a configured container: start.sh bridges
+    # LPB_MODEL_PROVIDER + every <PROVIDER>_{BASE_URL,API_KEY} pair, so a wizard
+    # test running inside one would follow the host's provider (or hit the
+    # 'already configured' no-op) instead of the fixture it describes.
+    for var in _PROVIDER_VARS:
+        _ENV_SAVED.setdefault(var, os.environ.pop(var, None))
     os.environ["LEMONADE_BASE_URL"] = url
     os.environ["LEMONADE_API_KEY"] = key
 
 
+_PROVIDER_VARS = (
+    "LPB_MODEL_PROVIDER", "MODEL_PROVIDER",
+    "LEMONADE_BASE_URL", "LEMONADE_API_KEY",
+    "LPB_LEMONADE_BASE_URL", "LPB_LEMONADE_API_KEY",
+    "STRIXITE_BASE_URL", "STRIXITE_API_KEY",
+    "LPB_STRIXITE_BASE_URL", "LPB_STRIXITE_API_KEY",
+)
+_ENV_SAVED: dict[str, str | None] = {}
+
+
 def _env_teardown():
-    os.environ.pop("LEMONADE_BASE_URL", None)
-    os.environ.pop("LEMONADE_API_KEY", None)
+    for var in ("LEMONADE_BASE_URL", "LEMONADE_API_KEY"):
+        os.environ.pop(var, None)
+    for var, value in _ENV_SAVED.items():
+        if value is not None:
+            os.environ[var] = value
+    _ENV_SAVED.clear()
+
+
+def _clean_provider_env(fn):
+    """Run a test with the ambient provider env removed.
+
+    Applied to every test in this suite (see main()): the wizard reads provider
+    selection from the environment, so a run inside a configured container would
+    otherwise follow the host's setup instead of the fixture. Tests that want a
+    provider set still set it themselves, inside the window.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        saved = {v: os.environ.pop(v, None) for v in _PROVIDER_VARS}
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            for var, value in saved.items():
+                if value is None:
+                    os.environ.pop(var, None)
+                else:
+                    os.environ[var] = value
+    return wrapper
+
+
+def _scrubbed(ns: dict) -> dict:
+    """Namespace for the harness: every test_* wrapped in _clean_provider_env."""
+    return {name: (_clean_provider_env(fn)
+                   if name.startswith("test_") and callable(fn) else fn)
+            for name, fn in ns.items()}
 
 
 class _TTY:
@@ -654,6 +704,34 @@ def test_lpbconfig_setup_noninteractive_noop_when_configured(tmpdir):
     print("  PASS\n")
 
 
+def test_lpbconfig_setup_env_provider_without_creds_runs_wizard(tmpdir):
+    """A provider named only in the env is not 'already configured'.
+
+    This is start.sh's fallback path: the host .env selects the provider while
+    the agent dir holds no credentials yet. Returning rc 0 without writing
+    auth.json left the container silently unconfigured.
+    """
+    remote, _ = _bare_remote(tmpdir, "config", "dev")
+    agent = _make_agent_dir(tmpdir)
+    orig = setup_mod._http_get_json
+    setup_mod._http_get_json = _http_ok
+    _env_setup()
+    os.environ["CONFIG_REMOTE"] = str(remote)
+    os.environ["CONFIG_REF"] = "dev"
+    os.environ["LPB_MODEL_PROVIDER"] = "lemonade"      # requested, not persisted
+    try:
+        rc = lc.cmd_setup(agent_dir=agent, non_interactive=True,
+                          cons=_quiet_console())
+    finally:
+        setup_mod._http_get_json = orig
+        _env_teardown()
+        for k in ("CONFIG_REMOTE", "CONFIG_REF", "LPB_MODEL_PROVIDER"):
+            os.environ.pop(k, None)
+    assert rc == 0
+    assert (agent / "auth.json").exists()
+    print("  PASS\n")
+
+
 def test_lpbconfig_setup_delegates_to_wizard(tmpdir):
     remote, _ = _bare_remote(tmpdir, "config", "dev")
     agent = _make_agent_dir(tmpdir)
@@ -917,7 +995,8 @@ def test_models_json_capabilities_and_user_overrides(tmpdir):
 
 
 def main() -> int:
-    return run_lpbx_suite("localpibox.setup (unified setup wizard) tests", globals())
+    return run_lpbx_suite("localpibox.setup (unified setup wizard) tests",
+                          _scrubbed(globals()))
 
 
 if __name__ == "__main__":
