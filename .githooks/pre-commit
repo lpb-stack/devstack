@@ -12,6 +12,11 @@
 # Escape hatches:
 #   SKIP_TESTS=1 git commit ...   — skip unit tests (~4s)
 #   git commit --no-verify ...    — skip everything
+#   LPB_ALLOW_MAIN_COMMIT=1 git commit ... — commit on the stable branch
+#       (main) without release promote. The validate commit guard (section 0)
+#       blocks development commits to main; use this only for deliberate
+#       stable-branch work. `release promote` sets it automatically for its
+#       devstack VERSION-strip commit.
 
 # In a linked worktree GIT_DIR is an ABSOLUTE path into the main repo's
 # .git/worktrees/<name> — it would leak into every `git -C` subprocess the

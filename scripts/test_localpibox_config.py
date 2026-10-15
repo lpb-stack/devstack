@@ -370,6 +370,60 @@ def test_render_force_memory_local_wins(tmpdir):
     assert m["memoryCharLimit"] == 3000           # template fills gaps
 
 
+def test_render_force_drops_stale_managed_pin(tmpdir):
+    """Guard: a stale pin of a MANAGED repo (e.g. leftover -lpb-dev after a
+    promote to -lpb) is not a user addition — the template owns that repo.
+    Keeping it would leave two entries for one repo, which pi maps to a
+    single checkout dir (duplicate updates race there). Stale managed pins
+    are dropped; genuine extras (npm/bare) are preserved."""
+    agent = tmpdir / "agent"
+    agent.mkdir()
+    _make_templates(agent)  # template: demo@__LPB_VERSION__ + npm:somepkg
+    polluted = {
+        "packages": [
+            "git:github.com/lpb-stack/demo@0.0.83-lpb-dev",   # stale old pin
+            "git:github.com/lpb-stack/demo@0.0.83-lpb",       # duplicated entry
+            "npm:user-pkg",                                   # genuine extra
+        ],
+        "theme": "light",
+    }
+    (agent / "settings.json").write_text(json.dumps(polluted))
+    restore = _with_lpb_version("0.0.84-lpb")
+    try:
+        cons = _quiet_console()
+        assert lc.cmd_render(agent, cons, force=True) == 0
+    finally:
+        restore()
+    s = json.loads((agent / "settings.json").read_text())
+    demos = [p for p in s["packages"] if "lpb-stack/demo@" in p]
+    assert demos == ["git:github.com/lpb-stack/demo@0.0.84-lpb"]  # exactly one, re-pinned
+    assert "npm:user-pkg" in s["packages"]                       # extra kept
+    assert "npm:somepkg" in s["packages"]                        # template pkg kept
+
+
+def test_render_force_dedupes_repeated_managed_pins(tmpdir):
+    """Even without a version move, repeated entries of the same managed
+    repo collapse to one (defence in depth for already-polluted files)."""
+    agent = tmpdir / "agent"
+    agent.mkdir()
+    _make_templates(agent)
+    polluted = {
+        "packages": [
+            "git:github.com/lpb-stack/demo@0.1.0-lpb",
+            "git:github.com/lpb-stack/demo@0.1.0-lpb",
+        ],
+    }
+    (agent / "settings.json").write_text(json.dumps(polluted))
+    restore = _with_lpb_version("0.1.0-lpb")
+    try:
+        assert lc.cmd_render(agent, _quiet_console(), force=True) == 0
+    finally:
+        restore()
+    s = json.loads((agent / "settings.json").read_text())
+    demos = [p for p in s["packages"] if "lpb-stack/demo@" in p]
+    assert len(demos) == 1
+
+
 def test_reset_renders_runtime_config(tmpdir):
     remote = _setup_git_remote(tmpdir)
     _push_templates(tmpdir / "work")

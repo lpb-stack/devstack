@@ -18,7 +18,9 @@ from ..log import Console
 from ..run import run_cmd
 from .gitutil import git, git_auth
 from .repos import TAG_REPOS, repo_path, stack_repos
+from .repos import DEFAULT_AGENT_DIR
 from .version import get_version
+from .workspace import realign_pins
 
 
 # ─── Dev release gate ────────────────────────────────────────────────────────
@@ -554,6 +556,10 @@ def cmd_release_promote(*, assume_yes: bool, dry_run: bool, rebase: bool,
             cons.info(f"  {label}: merged origin/{dev_b} → {main_b} ({action})")
 
     # ── devstack VERSION: strip -dev on main ──
+    # devstack commits on main under the hook's promote exemption: the
+    # commit guard (validate section 0) refuses commits on the stable
+    # branch — this strip commit is THE legitimate one.
+    os.environ["LPB_ALLOW_MAIN_COMMIT"] = "1"
     for label, path, dev_b, main_b, gh, st in entries:
         if label != "devstack" or label in failures or label in skipped:
             continue
@@ -584,6 +590,7 @@ def cmd_release_promote(*, assume_yes: bool, dry_run: bool, rebase: bool,
                 failures.append("devstack")
             else:
                 cons.info(f"  devstack: VERSION {current} → {stable} (on {main_b})")
+    del os.environ["LPB_ALLOW_MAIN_COMMIT"]
 
     # ── Push ──
     cons.info("")
@@ -645,6 +652,11 @@ def cmd_release_promote(*, assume_yes: bool, dry_run: bool, rebase: bool,
         return 1
     stable_version = (version[:-len("-dev")] if version.endswith("-dev") else version)
     cons.done(f"Promoted all 6 repos. main's VERSION is now {stable_version}.")
+    # Realign the runtime pins to the stable version: without this, the
+    # dev pins outlive the release in settings.json (and the next
+    # render --force would re-append them as 'extras').
+    if realign_pins(DEFAULT_AGENT_DIR, "main", cons):
+        cons.info("  Run 'pi update --extensions' to apply the stable pins.")
     cons.info(f"CI (main pipeline) now builds :{stable_version}-* / :main-* / :latest-*")
     cons.info("and tags the 5 repos at the stable branches.")
     cons.info("After CI passes:")

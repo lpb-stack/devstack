@@ -1,0 +1,633 @@
+#!/usr/bin/env python3
+"""localpibox.stack workspace-sync tests:
+detached-head checkout, clone-missing, dirty skip, lockfile-drift discard,
+wrong branch, missing config, main pipeline."""
+from __future__ import annotations
+
+from testharness import run_lpbx_suite, _bare_remote, _push_branch, _quiet_console, log_mod
+
+import os
+import io
+import json
+import stat
+import sys
+import subprocess
+from unittest import mock
+
+from localpibox.stack.workspace import cmd_workspace_sync
+from localpibox.stack import workspace as ws_mod
+from localpibox.stack import repos as repos_mod
+
+
+class _workspace_ctx:
+    """Context manager stacking the ws_mod constant patch with the
+    LPB_EXTENSION_REPOS patch (git_extension_pin reads it for managed-pin
+    detection) — both stopped on exit."""
+
+    def __init__(self, patches, exts):
+        self.patches, self.exts = patches, exts
+
+    def __enter__(self):
+        self.patches.start()
+        self.exts.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.exts.stop()
+        self.patches.stop()
+        return False
+
+
+def _workspace_patch(tmpdir, repos, config_branch="dev", config_repo=True):
+    """Point lpb-config workspace constants at *tmpdir* (context manager).
+
+    Installs a clean config repo on *config_branch* at the agent dir unless
+    config_repo is False. Mirrors the real layout: the agent dir is a git
+    repo whose worktree contains the extension clones under git/ (ignored).
+    """
+    agent = tmpdir / "agent"
+    agent.mkdir(parents=True, exist_ok=True)
+    if config_repo:
+        cfg_remote, _ = _bare_remote(tmpdir, "config", config_branch)
+        subprocess.run(["git", "-C", str(agent), "init", "-q"], check=True)
+        subprocess.run(["git", "-C", str(agent), "config", "user.email", "t@t"], check=True)
+        subprocess.run(["git", "-C", str(agent), "config", "user.name", "t"], check=True)
+        subprocess.run(["git", "-C", str(agent), "remote", "add", "origin", str(cfg_remote)], check=True)
+        subprocess.run(["git", "-C", str(agent), "fetch", "-q", "origin", config_branch], check=True)
+        subprocess.run(["git", "-C", str(agent), "checkout", "-q", "-b", config_branch, "FETCH_HEAD"], check=True)
+        (agent / ".gitignore").write_text("git/\n")
+        subprocess.run(["git", "-C", str(agent), "add", ".gitignore"], check=True)
+        subprocess.run(["git", "-C", str(agent), "commit", "-qm", "gitignore"], check=True)
+        subprocess.run(["git", "-C", str(agent), "push", "-q", "origin", config_branch], check=True)
+    patches = mock.patch.multiple(
+        ws_mod,
+        WORKSPACE_REPOS=repos,
+        WORKSPACE_ROOT=tmpdir / "workspace",
+        AGENT_GIT=agent / "git" / "github.com" / "lpb-stack",
+        DEFAULT_AGENT_DIR=str(agent),
+        LPB_EXTENSION_REPOS=[r[0] for r in repos if r[2]],  # ws_mod's own copy
+    )
+    exts = mock.patch.object(
+        repos_mod, "LPB_EXTENSION_REPOS", [r[0] for r in repos if r[2]])  # git_extension_pin's copy
+    return _workspace_ctx(patches, exts)
+
+
+def _branch(p):
+    return subprocess.run(
+        ["git", "-C", str(p), "branch", "--show-current"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def test_lpb_config_sync_detached_head(tmpdir):
+    """Clone detached at a tag (pi's pinned-tag checkout) → ends on branch @ tip."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    ag = tmpdir / "agent" / "git" / "github.com" / "lpb-stack"
+    clone = ag / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    subprocess.run(["git", "-C", str(clone), "checkout", "-q", "0.0.1"], check=True)
+    _push_branch(src, "dev")
+    with _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    ws = tmpdir / "workspace"
+    assert code == 0
+    assert (ws / "repo-a").is_symlink()
+    assert (ws / "repo-a").resolve() == clone.resolve()
+    assert _branch(clone) == "dev"
+    assert (clone / "f").read_text() == "two"  # fast-forwarded
+
+
+def test_lpb_config_sync_clones_missing(tmpdir):
+    """Missing extension clone + missing real repo → both cloned and linked."""
+    repos = [("repo-a", True, True, "dev", "main"), ("repo-b", False, False, "dev", "main")]
+    _bare_remote(tmpdir, "repo-a", "dev")
+    _bare_remote(tmpdir, "repo-b", "dev")
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, repos):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    ws = tmpdir / "workspace"
+    ag = tmpdir / "agent" / "git" / "github.com" / "lpb-stack"
+    assert code == 0
+    assert (ag / "repo-a" / ".git").exists()
+    assert (ws / "repo-a").is_symlink()
+    assert (ws / "repo-b" / ".git").exists()  # real clone in workspace
+    assert _branch(ws / "repo-b") == "dev"
+
+
+def test_lpb_config_sync_dirty_skipped(tmpdir):
+    """Dirty worktree → left untouched, reported, non-zero exit."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    (clone / "f").write_text("local edit")
+    _push_branch(src, "dev")
+    out, err = io.StringIO(), io.StringIO()
+    with _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        cons = log_mod.Console(color=False, out=out, err=err)
+        code = cmd_workspace_sync("dev", cons)
+    assert code == 1
+    assert _branch(clone) == "dev"
+    assert (clone / "f").read_text() == "local edit"  # untouched
+    assert "uncommitted changes" in (out.getvalue() + err.getvalue())
+
+
+def test_lpb_config_sync_lockfile_drift_discarded(tmpdir):
+    """Only package-lock.json dirty (npm rewrite) → discarded, sync proceeds."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    (src / "package-lock.json").write_text('{\n  "name": "repo-a"\n}\n')
+    subprocess.run(["git", "-C", str(src), "add", "package-lock.json"], check=True)
+    subprocess.run(["git", "-C", str(src), "commit", "-qm", "lockfile"], check=True)
+    subprocess.run(["git", "-C", str(src), "push", "-q", "origin", "dev"], check=True)
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    (clone / "package-lock.json").write_text('{\n  "name": "repo-a", "rewritten": true\n}\n')
+    _push_branch(src, "dev")
+    out, err = io.StringIO(), io.StringIO()
+    with _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        cons = log_mod.Console(color=False, out=out, err=err)
+        code = cmd_workspace_sync("dev", cons)
+    assert code == 0
+    assert (clone / "package-lock.json").read_text() == '{\n  "name": "repo-a"\n}\n'  # restored
+    assert (clone / "f").read_text() == "two"  # fast-forwarded
+    assert "lockfile rewrite" in (out.getvalue() + err.getvalue())
+
+
+def test_lpb_config_sync_mixed_dirt_still_skipped(tmpdir):
+    """package-lock.json + a real file dirty → still skipped."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    (src / "package-lock.json").write_text('{\n  "name": "repo-a"\n}\n')
+    subprocess.run(["git", "-C", str(src), "add", "package-lock.json"], check=True)
+    subprocess.run(["git", "-C", str(src), "commit", "-qm", "lockfile"], check=True)
+    subprocess.run(["git", "-C", str(src), "push", "-q", "origin", "dev"], check=True)
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    (clone / "package-lock.json").write_text('{\n  "rewritten": true\n}\n')
+    (clone / "f").write_text("local edit")
+    _push_branch(src, "dev")
+    with _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 1
+    assert _branch(clone) == "dev"
+    assert (clone / "f").read_text() == "local edit"  # untouched
+    assert (clone / "package-lock.json").read_text() == '{\n  "name": "repo-a"\n}\n'  # drift discarded
+
+
+def test_lpb_config_sync_wrong_branch(tmpdir):
+    """Clean repo on a feature branch → switched to pipeline branch @ tip."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    subprocess.run(["git", "-C", str(src), "checkout", "-q", "-b", "feature"], check=True)
+    subprocess.run(["git", "-C", str(src), "push", "-q", "origin", "feature"], check=True)
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    subprocess.run(["git", "-C", str(clone), "checkout", "-q", "feature"], check=True)
+    _push_branch(src, "dev")
+    with _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    assert _branch(clone) == "dev"
+    assert (clone / "f").read_text() == "two"
+
+
+def test_lpb_config_sync_missing_config(tmpdir):
+    """No config repo at agent dir → warning + non-zero exit."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    out, err = io.StringIO(), io.StringIO()
+    with _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")], config_repo=False):
+        cons = log_mod.Console(color=False, out=out, err=err)
+        code = cmd_workspace_sync("dev", cons)
+    assert code == 1
+    assert "config" in (out.getvalue() + err.getvalue())
+
+
+def test_lpb_config_sync_main_pipeline(tmpdir):
+    """main pipeline → main branches selected for repo + config."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    subprocess.run(["git", "-C", str(src), "checkout", "-q", "-b", "main"], check=True)
+    (src / "f").write_text("stable")
+    subprocess.run(["git", "-C", str(src), "commit", "-qam", "stable"], check=True)
+    subprocess.run(["git", "-C", str(src), "push", "-q", "origin", "main"], check=True)
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", "--branch", "main", str(remote), str(clone)], check=True)
+    with _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")], config_branch="main"):
+        code = cmd_workspace_sync("main", _quiet_console())
+    assert code == 0
+    assert _branch(clone) == "main"
+    assert (clone / "f").read_text() == "stable"
+
+
+def _local_branches(p):
+    return set(subprocess.run(
+        ["git", "-C", str(p), "branch", "--format", "%(refname:short)"],
+        check=True, capture_output=True, text=True,
+    ).stdout.split())
+
+
+def test_lpb_config_sync_ensures_counterpart_branch(tmpdir):
+    """Fresh clone (--branch dev) → sync also creates the local 'main' branch.
+
+    validate's fork-branch check needs BOTH local refs (pi: lpb + lpb-dev);
+    a --branch clone only has one. Sync must leave the workspace in a state
+    where validate can pass — no manual branch creation in between.
+    """
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    # A second branch on the remote (the other pipeline's branch)
+    subprocess.run(["git", "-C", str(src), "checkout", "-q", "-b", "main"], check=True)
+    (src / "f").write_text("stable")
+    subprocess.run(["git", "-C", str(src), "commit", "-qam", "stable"], check=True)
+    subprocess.run(["git", "-C", str(src), "push", "-q", "origin", "main"], check=True)
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, [("repo-a", False, False, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    clone = tmpdir / "workspace" / "repo-a"
+    assert code == 0
+    assert _branch(clone) == "dev"
+    assert {"dev", "main"} <= _local_branches(clone)  # both pipelines tracked locally
+    # Idempotent: a second sync changes nothing (config_repo=False: the agent
+    # repo from the first patch is still in place)
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, [("repo-a", False, False, "dev", "main")], config_repo=False):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    assert {"dev", "main"} <= _local_branches(clone)
+
+
+def test_lpb_config_sync_missing_counterpart_is_not_an_error(tmpdir):
+    """Remote without the counterpart branch (fresh fork) → sync still succeeds."""
+    _bare_remote(tmpdir, "repo-a", "dev")  # only 'dev' exists on the remote
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, [("repo-a", False, False, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    clone = tmpdir / "workspace" / "repo-a"
+    assert code == 0
+    assert _branch(clone) == "dev"
+    assert "main" not in _local_branches(clone)
+
+
+def test_lpb_config_sync_adds_upstream_remote(tmpdir):
+    """Forked repo (UPSTREAM_REMOTES) → sync adds 'upstream' remote and fetches it."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    _push_branch(src, "dev")
+    up_remote, _ = _bare_remote(tmpdir, "upstream-a", "master")
+    with mock.patch.object(ws_mod, "UPSTREAM_REMOTES", {"repo-a": str(up_remote)}), \
+         _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    url = subprocess.run(
+        ["git", "-C", str(clone), "remote", "get-url", "upstream"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert url == str(up_remote)
+    subprocess.run(
+        ["git", "-C", str(clone), "rev-parse", "--verify",
+         "refs/remotes/upstream/master"],
+        check=True, capture_output=True,
+    )
+
+
+def test_lpb_config_sync_repairs_upstream_url(tmpdir):
+    """Stale 'upstream' URL → sync repairs it to the canonical one."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    subprocess.run(
+        ["git", "-C", str(clone), "remote", "add", "upstream",
+         "https://example.invalid/old.git"],
+        check=True,
+    )
+    up_remote, _ = _bare_remote(tmpdir, "upstream-a", "master")
+    with mock.patch.object(ws_mod, "UPSTREAM_REMOTES", {"repo-a": str(up_remote)}), \
+         _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    url = subprocess.run(
+        ["git", "-C", str(clone), "remote", "get-url", "upstream"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    assert url == str(up_remote)
+
+
+def test_lpb_config_sync_upstream_failure_is_nonfatal(tmpdir):
+    """Unreachable upstream (dead URL) → warned, sync still succeeds."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    _push_branch(src, "dev")
+    with mock.patch.object(
+        ws_mod, "UPSTREAM_REMOTES",
+        {"repo-a": str(tmpdir / "remotes" / "does-not-exist.git")},
+    ), _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    assert _branch(clone) == "dev"
+
+
+def _write_settings(agent, packages):
+    # settings.json is gitignored in the real config repo — keep it that way
+    # here, or the config-repo sync step skips the 'dirty' worktree.
+    if (agent / ".git").exists():
+        (agent / ".gitignore").write_text(
+            (agent / ".gitignore").read_text() + "settings.json\n")
+        (agent / "settings.json").write_text(json.dumps({"packages": packages}))
+        # commit + push the .gitignore change (it is tracked); settings.json
+        # stays untracked+ignored so the worktree reads clean and the config
+        # repo fast-forwards without 'local ahead' friction.
+        subprocess.run(["git", "-C", str(agent), "add", ".gitignore"], check=True)
+        subprocess.run(["git", "-C", str(agent), "commit", "-qm", "gitignore settings.json"], check=True)
+        cur = subprocess.run(["git", "-C", str(agent), "branch", "--show-current"],
+                             check=True, capture_output=True, text=True).stdout.strip()
+        subprocess.run(["git", "-C", str(agent), "push", "-q", "origin", cur], check=True)
+    else:
+        (agent / "settings.json").write_text(json.dumps({"packages": packages}))
+
+
+def _read_settings(agent):
+    return json.loads((agent / "settings.json").read_text())
+
+
+def test_lpb_config_sync_realigns_stale_pins(tmpdir):
+    """workspace sync re-aligns settings.json pins to the synced pipeline:
+    a leftover -lpb-dev pin (from when the repo was on dev) is re-pinned to
+    the stable version when syncing --tag main."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    subprocess.run(["git", "-C", str(src), "checkout", "-q", "-b", "main"], check=True)
+    (src / "f").write_text("stable")
+    subprocess.run(["git", "-C", str(src), "commit", "-qam", "stable"], check=True)
+    subprocess.run(["git", "-C", str(src), "push", "-q", "origin", "main"], check=True)
+    agent = tmpdir / "agent"
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")], config_branch="main"):
+        _write_settings(agent, [
+            "git:github.com/lpb-stack/repo-a@0.0.83-lpb-dev",  # stale dev pin
+            "npm:user-pkg",
+        ])
+        with mock.patch.object(ws_mod, "expected_pin_version", lambda p: "0.0.83-lpb"):
+            code = cmd_workspace_sync("main", _quiet_console())
+    assert code == 0
+    pkgs = _read_settings(agent)["packages"]
+    assert "git:github.com/lpb-stack/repo-a@0.0.83-lpb" in pkgs
+    assert "git:github.com/lpb-stack/repo-a@0.0.83-lpb-dev" not in pkgs
+    assert "npm:user-pkg" in pkgs
+
+
+def test_lpb_config_sync_dedupes_polluted_pins(tmpdir):
+    """Already-polluted file (two entries for the same repo) → sync leaves
+    exactly ONE re-pinned entry per managed repo (pi maps every
+    git:<owner>/<repo> entry to one storage dir; duplicates race there)."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    agent = tmpdir / "agent"
+    with mock.patch.dict(os.environ, {"LPB_STACK_REMOTE_BASE": str(tmpdir / "remotes")}), \
+         _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+        _write_settings(agent, [
+            "git:github.com/lpb-stack/repo-a@0.0.83-lpb-dev",
+            "git:github.com/lpb-stack/repo-a@0.0.83-lpb",
+            "npm:user-pkg",
+        ])
+        with mock.patch.object(ws_mod, "expected_pin_version", lambda p: "0.0.83-lpb-dev"):
+            code = cmd_workspace_sync("dev", _quiet_console())
+    assert code == 0
+    pkgs = _read_settings(agent)["packages"]
+    assert pkgs.count("git:github.com/lpb-stack/repo-a@0.0.83-lpb-dev") == 1
+    assert "git:github.com/lpb-stack/repo-a@0.0.83-lpb" not in pkgs
+    assert "npm:user-pkg" in pkgs
+
+
+def test_realign_pins_no_settings_is_noop(tmpdir):
+    """No settings.json → realign is a clean no-op (0), not an error."""
+    from localpibox.stack.workspace import realign_pins
+    n = realign_pins(tmpdir / "nope", "dev", _quiet_console())
+    assert n == 0
+
+
+def test_update_pinned_versions_dedupes(tmpdir):
+    """_update_pinned_versions: re-pin + dedupe in one pass; first entry
+    wins, later duplicates of the same repo are dropped."""
+    from localpibox.stack.workspace import _update_pinned_versions
+    settings = {"packages": [
+        "npm:keep",
+        "git:github.com/lpb-stack/repo-a@old-1",
+        "git:github.com/lpb-stack/repo-a@old-2",   # duplicate → dropped
+    ]}
+    with mock.patch.object(repos_mod, "LPB_EXTENSION_REPOS", ["repo-a"]), \
+         mock.patch.object(ws_mod, "LPB_EXTENSION_REPOS", ["repo-a"]):
+        changes = _update_pinned_versions(settings, "0.0.9-lpb")
+    assert settings["packages"] == [
+        "npm:keep",
+        "git:github.com/lpb-stack/repo-a@0.0.9-lpb",
+    ]
+    assert changes == [("repo-a", "old-1", "0.0.9-lpb")]
+
+
+# ─── devstack checkout discovery (directory name is not fixed) ────────────
+
+def _make_devstack(dirpath):
+    """A directory carrying the devstack signature (VERSION + stack library)."""
+    sig = dirpath / "scripts" / "localpibox" / "stack"
+    sig.mkdir(parents=True, exist_ok=True)
+    (sig / "workspace.py").write_text("")
+    (dirpath / "VERSION").write_text("0.0.1-lpb-dev\n")
+    return dirpath
+
+
+def _sign_devstack(dirpath, push_to=None):
+    """Add the devstack signature to a git work tree (committed, pushed back)."""
+    if (dirpath / "VERSION").is_file():
+        return dirpath                     # already signed (came from the remote)
+    _make_devstack(dirpath)
+    subprocess.run(["git", "-C", str(dirpath), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(dirpath), "-c", "user.email=t@t",
+                    "-c", "user.name=t", "commit", "-qm", "signature"], check=True)
+    if push_to is not None:
+        subprocess.run(["git", "-C", str(dirpath), "push", "-q", "origin", push_to],
+                       check=True)
+    return dirpath
+
+
+def test_devstack_dir_detected_by_content(tmpdir):
+    """A checkout named 'molly' is the devstack repo — the name is not a fact."""
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    with mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"):
+        assert repos_mod.devstack_dirs(ws) == [ws / "molly"]
+        assert repos_mod.resolve_devstack_dir(ws) == ws / "molly"
+
+
+def test_devstack_dir_asks_when_ambiguous(tmpdir):
+    """Two checkouts → ask; the answer decides, empty answer takes the first."""
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    _make_devstack(ws / "other")
+    repos_mod.set_devstack_dir(None)
+    with mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"), \
+         mock.patch.dict(os.environ, {}, clear=False):
+        os.environ.pop("LPB_DEVSTACK_DIR", None)          # pins are tested separately
+        out = io.StringIO()
+        cons = log_mod.Console(color=False, out=out, err=out)
+        chosen = repos_mod.resolve_devstack_dir(
+            ws, cons=cons, inp=io.StringIO("2\n"), out=out)
+        assert chosen == ws / "other"
+        assert "which one" in out.getvalue()
+        out2 = io.StringIO()
+        cons2 = log_mod.Console(color=False, out=out2, err=out2)
+        default = repos_mod.resolve_devstack_dir(
+            ws, cons=cons2, inp=io.StringIO("\n"), out=out2)
+        assert default == ws / "molly"
+
+
+def test_devstack_dir_pin_skips_the_prompt(tmpdir):
+    """--devstack-dir / LPB_DEVSTACK_DIR picks the checkout without asking."""
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    _make_devstack(ws / "other")
+    out = io.StringIO()
+    cons = log_mod.Console(color=False, out=out, err=out)
+    repos_mod.set_devstack_dir(ws / "other")
+    try:
+        assert repos_mod.resolve_devstack_dir(ws, cons=cons, out=out) == ws / "other"
+        assert "which one" not in out.getvalue()
+    finally:
+        repos_mod.set_devstack_dir(None)
+    with mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"), \
+         mock.patch.dict(os.environ, {"LPB_DEVSTACK_DIR": str(ws / "molly")}):
+        assert repos_mod.resolve_devstack_dir(ws, cons=cons, out=out) == ws / "molly"
+
+
+def test_devstack_dir_pin_must_be_a_checkout(tmpdir):
+    """A pin pointing at something that is not devstack → reported, not guessed."""
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    (tmpdir / "stray").mkdir()
+    out, err = io.StringIO(), io.StringIO()
+    cons = log_mod.Console(color=False, out=out, err=err)
+    repos_mod.set_devstack_dir(tmpdir / "stray")
+    try:
+        assert repos_mod.resolve_devstack_dir(ws, cons=cons, out=out) is None
+    finally:
+        repos_mod.set_devstack_dir(None)
+    assert "not a devstack checkout" in (out.getvalue() + err.getvalue())
+
+
+def test_devstack_dir_repo_path_uses_the_checkout(tmpdir):
+    """repo_path('devstack') follows the detected checkout (release/version code)."""
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    with mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"), \
+         mock.patch.object(repos_mod, "WORKSPACE_ROOT", ws):
+        assert repos_mod.repo_path("devstack") == ws / "molly"
+        assert repos_mod.repo_path("lpb-memory") == ws / "lpb-memory"
+
+
+def test_devstack_root_candidates_include_renamed_checkout(tmpdir):
+    """VERSION discovery sees a renamed checkout too."""
+    from localpibox.stack import version as version_mod
+    ws = tmpdir / "workspace"
+    _make_devstack(ws / "molly")
+    with mock.patch.object(repos_mod, "WORKSPACE_ROOT", ws), \
+         mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"), \
+         mock.patch.object(version_mod, "_DEVSTACK_ROOT", tmpdir / "nowhere"):
+        assert ws / "molly" in version_mod._devstack_root_candidates()
+
+
+def _clone_signed_devstack(remote, dest):
+    """Clone *remote* at dev and add the devstack signature (committed + pushed)."""
+    subprocess.run(["git", "clone", "-q", "--branch", "dev", str(remote), str(dest)],
+                   check=True)
+    return _sign_devstack(dest, "dev")
+
+
+def test_devstack_sync_uses_renamed_checkout(tmpdir):
+    """sync must NOT clone a second devstack beside the running checkout."""
+    remote, src = _bare_remote(tmpdir, "devstack", "dev")
+    _sign_devstack(src, "dev")
+    ws = tmpdir / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    molly = ws / "molly"
+    _clone_signed_devstack(remote, molly)
+    _push_branch(src, "dev")                      # a commit molly must take
+    repos_mod.set_devstack_dir(None)
+    with _workspace_patch(tmpdir, [("devstack", False, False, "dev", "main")]):
+        code = cmd_workspace_sync("dev", _quiet_console())
+    repos_mod.set_devstack_dir(None)
+    assert code == 0
+    assert _branch(molly) == "dev"
+    assert (molly / "f").read_text() == "two"    # fast-forwarded in place
+    assert not (ws / "devstack").exists()        # no second clone
+
+
+def test_devstack_sync_ambiguous_without_prompt(tmpdir):
+    """Non-interactive + two checkouts → warns, keeps working on the first."""
+    remote, src = _bare_remote(tmpdir, "devstack", "dev")
+    _sign_devstack(src, "dev")
+    ws = tmpdir / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    _clone_signed_devstack(remote, ws / "molly")
+    _clone_signed_devstack(remote, ws / "other")
+    out, err = io.StringIO(), io.StringIO()
+    repos_mod.set_devstack_dir(None)
+    try:
+        with _workspace_patch(tmpdir, [("devstack", False, False, "dev", "main")]), \
+             mock.patch.object(sys, "stdin", io.StringIO()):   # non-tty → never blocks
+            cons = log_mod.Console(color=False, out=out, err=err)
+            code = cmd_workspace_sync("dev", cons)
+    finally:
+        repos_mod.set_devstack_dir(None)
+    text = out.getvalue() + err.getvalue()
+    assert code == 0
+    assert "checkouts" in text and "--devstack-dir" in text
+
+
+def test_devstack_stale_worktree_reports_repair(tmpdir):
+    """Moved/renamed worktree → repair hint instead of a wall of git errors."""
+    repo = tmpdir / "main-clone"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+    subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+    (repo / "f").write_text("one")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "first"], check=True)
+    wt = tmpdir / "moved-worktree"
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q",
+                    "-b", "wt", str(wt)], check=True)
+    assert ws_mod._stale_worktree(wt) == ""        # healthy worktree
+    # Simulate the host-path move that strands the recorded gitdir.
+    (wt / ".git").write_text("gitdir: /nowhere/.git/worktrees/moved-worktree\n")
+    assert ws_mod._stale_worktree(wt) == "/nowhere/.git/worktrees/moved-worktree"
+    out, err = io.StringIO(), io.StringIO()
+    cons = log_mod.Console(color=False, out=out, err=err)
+    assert ws_mod._sync_repo("devstack", wt, "dev", cons) is False
+    assert "git worktree repair" in (out.getvalue() + err.getvalue())
+
+
+def test_sync_unwritable_workspace_root_reports(tmpdir):
+    """Single-project container (root-owned workspace root) → error, no traceback."""
+    remote, src = _bare_remote(tmpdir, "repo-a", "dev")
+    clone = tmpdir / "agent" / "git" / "github.com" / "lpb-stack" / "repo-a"
+    subprocess.run(["git", "clone", "-q", str(remote), str(clone)], check=True)
+    _push_branch(src, "dev")
+    ws = tmpdir / "workspace"
+    ws.mkdir(parents=True, exist_ok=True)
+    ws.chmod(stat.S_IRUSR | stat.S_IXUSR)          # r-x: entries cannot be created
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with _workspace_patch(tmpdir, [("repo-a", True, True, "dev", "main")]):
+            cons = log_mod.Console(color=False, out=out, err=err)
+            code = cmd_workspace_sync("dev", cons)
+    finally:
+        ws.chmod(stat.S_IRWXU)
+    text = out.getvalue() + err.getvalue()
+    assert code == 1
+    assert "not writable" in text
+    assert "Traceback" not in text
+
+
+def main() -> int:
+    return run_lpbx_suite("lpb-config workspace sync tests", globals())
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

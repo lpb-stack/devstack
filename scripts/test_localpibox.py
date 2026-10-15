@@ -17,6 +17,7 @@ The suite is split one file per target (all in scripts/):
   test_localpibox_stack.py            — localpibox.stack: pipeline + VERSION math
   test_localpibox_devstack.py         — scripts/lpb-devstack (bump, tag-repos)
   test_localpibox_validate.py         — support/validate
+  test_localpibox_commit_guard.py     — pre-commit guard: main is promote-only
   test_localpibox_install_browser.py  — support/install-browser
   test_localpibox_install_openspec.py — support/install-openspec
 
@@ -43,6 +44,7 @@ import test_localpibox_release as t_release
 import test_localpibox_stack as t_stack
 import test_localpibox_devstack as t_devstack
 import test_localpibox_validate as t_validate
+import test_localpibox_commit_guard as t_commit_guard
 import test_localpibox_install_browser as t_install_browser
 import test_localpibox_install_openspec as t_install_openspec
 
@@ -60,6 +62,7 @@ MODULES = [
     t_stack,
     t_devstack,
     t_validate,
+    t_commit_guard,
     t_install_browser,
     t_install_openspec,
 ]
