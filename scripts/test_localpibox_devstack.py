@@ -86,9 +86,13 @@ def test_devstack_bump_commits(tmpdir):
 
 
 def test_devstack_bump_missing_version(tmpdir):
+    # devstack_dirs() resolves against repos.* roots — patch them too or the
+    # content-based fallback finds the checkout this suite runs from.
     with mock.patch.object(ver_mod, "_VERSION_FILE", None), \
          mock.patch.object(ver_mod, "_DEVSTACK_ROOT", tmpdir / "nope"), \
-         mock.patch.object(ver_mod, "WORKSPACE_ROOT", tmpdir / "nope2"):
+         mock.patch.object(ver_mod, "WORKSPACE_ROOT", tmpdir / "nope2"), \
+         mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nope3"), \
+         mock.patch.object(repos_mod, "WORKSPACE_ROOT", tmpdir / "nope4"):
         assert ld.cmd_bump(_quiet_console(), no_commit=True) == 1
 
 

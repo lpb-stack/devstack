@@ -47,9 +47,13 @@ def test_stack_expected_pin_version_main_fallback(tmpdir):
     root = tmpdir / "devstack"
     root.mkdir()
     (root / "VERSION").write_text("0.1.0-lpb-dev\n")
+    # Content-based discovery (devstack_dirs) resolves against repos.* roots;
+    # patch them too or the checkout this suite runs from leaks into lookup.
     with mock.patch.object(ver_mod, "_VERSION_FILE", None), \
          mock.patch.object(ver_mod, "_DEVSTACK_ROOT", root), \
-         mock.patch.object(ver_mod, "WORKSPACE_ROOT", tmpdir / "nowhere"):
+         mock.patch.object(ver_mod, "WORKSPACE_ROOT", tmpdir / "nowhere"), \
+         mock.patch.object(repos_mod, "_DEVSTACK_ROOT", tmpdir / "nope"), \
+         mock.patch.object(repos_mod, "WORKSPACE_ROOT", tmpdir / "nowhere"):
         assert expected_pin_version("dev") == "0.1.0-lpb-dev"
         assert expected_pin_version("main") == "0.1.0-lpb"
 
