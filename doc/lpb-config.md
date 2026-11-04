@@ -72,10 +72,11 @@ Settings.json is **template-driven**, not git-tracked:
 1. Config repo ships `settings.json.template` with `__LPB_VERSION__` placeholders
 2. Before the first start, the setup wizard (`lpb setup` on the host, or
    `lpb-config setup` in a shell) renders `settings.json` and writes the
-   lemonade provider + default model — `start.sh` re-renders on first boot
+   selected provider + default model (strixite → `models.json`, lemonade →
+   `auth.json`) — `start.sh` re-renders on first boot
    as a fallback (`lpb-config render`)
 3. Model/provider are configured interactively with live validation — see
-   the First-Run Setup section above (no `/login` needed for lemonade)
+   the First-Run Setup section above (no `/login` needed for local providers)
 4. Pin sync: `lpb-config sync-pins` (main pipeline reads
    stable version from devstack `origin/main`)
 5. `lpb-devstack validate` checks pins match the current stack version

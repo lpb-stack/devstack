@@ -2162,12 +2162,12 @@ def _config_ref_for_pipeline() -> str:
 
 def _setup_provider_name() -> str:
     """Selected model provider: shell env (LPB_ then bare), lpb.conf.env,
-    else lemonade (the historical default)."""
+    else strixite (the default since the v0.5 server line)."""
     name = ((os.environ.get("LPB_MODEL_PROVIDER")
              or os.environ.get("MODEL_PROVIDER")
              or _conf_cfg.get("LPB_MODEL_PROVIDER", ""))
-            or "lemonade").strip().lower()
-    return name if name in ("lemonade", "strixite") else "lemonade"
+            or "strixite").strip().lower()
+    return name if name in ("lemonade", "strixite") else "strixite"
 
 
 def _setup_defaults(provider: str = "") -> tuple[str, str]:

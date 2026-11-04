@@ -29,7 +29,7 @@ for the context window.
         "id": "qwen3.8-flash-next",
         "reasoning": true,
         "input": ["text", "image"],
-        "contextWindow": 262144,
+        "contextWindow": 524288,
         "maxTokens": 16384,
         "thinkingLevelMap": { "off": "none", "max": "xhigh" },
         "compat": { "thinkingFormat": "openai", "supportsDeveloperRole": false }
@@ -50,7 +50,8 @@ Re-run `support/strixite-probe.py` to check them all after a server upgrade.
 
 | Fact | Consequence for `models.json` |
 |---|---|
-| `/v1/models` reports `context_length` (262144 on the current build) | `contextWindow`, refreshed from the server on every setup run — the operator sets it with `-c/--ctx-size`, so a stale value would overflow at runtime |
+| `/v1/models` reports `context_length` (524288 on the v0.5 build) | `contextWindow`, refreshed from the server on every setup run — the operator sets it with `-c/--ctx-size`, so a stale value would overflow at runtime |
+| `GET /health` answers `status`, `model`, `context_length`, `vision`, `slots` (since v0.5) | the setup probe marks the served model as *loaded* (same as Lemonade's health), so the wizard defaults to the model that actually answers |
 | `reasoning_effort` accepts `none`, `minimal`, `low`, `medium`, `high`, `xhigh`; **400** on `max` and `auto` | `thinkingLevelMap.max = "xhigh"` |
 | Strixite's own aliasing: `minimal = low`, `high = xhigh` | Pi's 7 levels collapse to 4 real behaviours — `low`≈`minimal`, `xhigh`≈`high`≈`max` |
 | No thinking field at all = server default = **thinking on** | `off` must be an explicit wire value: `thinkingLevelMap.off = "none"` |
@@ -61,11 +62,14 @@ Re-run `support/strixite-probe.py` to check them all after a server upgrade.
 | Budget fields accepted (`max_thinking_tokens`, `thinking.budget_tokens`, …); disagreeing values → 400 | not used — Pi sends no budget for strixite, level only |
 | `store` / `include` / `stream_options` are ignored, not rejected | no compat flags needed for Pi's extras |
 | Streaming terminal chunk carries `usage` + `strix`; `strix` also on the last content chunk, with `n_thinking_tokens` for billing | usage tracking works unchanged |
+| `response_format` (`json_object`/`json_schema`) is token-level enforced — but **400** together with `tools`, and on `tool_choice: "required"` or a named tool, or on schema keywords it can't enforce (numeric bounds, `pattern`, `allOf`, …) | Pi's normal path (tools + no `response_format`) is safe; structured-output modes must keep schemas inside the enforced subset — probe checks 10 guards it |
+| Server holds `total-slots` (2 by default) conversations at once; each slot keeps full-context state, decode is batched | agent + subagents share slots; requests past them queue — no client config needed |
 
 ## Thinking level — measured
 
 6 classic reasoning problems (snail/well, bat+ball, …), single shot, thinking
-on vs off, on the current single-user build:
+on vs off, measured on the v0.4 single-slot build (v0.5 batches two
+conversations per forward — re-measure before quoting these numbers for it):
 
 | Pi level | Sent as | Correct | Avg wall time | Avg completion tokens |
 |---|---|---|---|---|
@@ -94,6 +98,22 @@ Set it with `lpb-config set thinking <level>` (or `/settings` inside a session);
 `lpb-config show` prints what is active. Nothing in the stack env pins it — the
 value lives in `settings.json` (`defaultThinkingLevel`).
 
+## Host run contract
+
+The server itself is not installed by the stack — it runs as a podman
+container on the host (a Quadlet unit, `~/.config/containers/systemd/strixite.container`):
+
+- **Image pinned to a release tag** (`ghcr.io/shawnshekari/strixite:vX.Y.Z`,
+  never `:latest`) — `MODEL_CAPABILITIES` and the wire facts above are verified
+  against one release at a time; bump the pin and re-run the probe together.
+- **Port**: the server listens on `5300` inside the container; the unit
+  publishes `127.0.0.1:8000:5300`. The `:8000` host port is the stack's
+  contract (`LPB_STRIXITE_BASE_URL`); the localhost binding matters because the
+  server has **no authentication** — never publish it on `0.0.0.0` on a
+  networked machine.
+- Restarting the container interrupts every running pi session — bump the pin
+  and restart from a plain shell, not from inside pi.
+
 ## Re-validating
 
 ```bash
@@ -106,7 +126,9 @@ lpb-config check
 ```
 
 Run the probe after a strixite bump, after a Pi bump (Pi decides the request
-shape, not us), and whenever `MODEL_CAPABILITIES` changes.
+shape, not us), and whenever `MODEL_CAPABILITIES` changes. It now also checks
+`/health` (check 9) and the structured-output refusals (check 10); the
+`lpb-config check` / `lpb doctor` loaded-model marker reads the same `/health`.
 
 ## Hand-tuning
 

@@ -19,6 +19,9 @@ Checks (numbered in the output):
   6  vision works — hence input: ["text","image"]
   7  max_completion_tokens caps the response — pi's maxTokens is honoured
   8  pi's extras (store, stream_options, include) are ignored, not 400s
+  9  /health answers with status+model (setup marks models loaded from it)
+ 10  structured output refuses what pi must never send: response_format with
+    tools, and tool_choice "required" (a harness that adds either breaks here)
 """
 from __future__ import annotations
 
@@ -168,6 +171,33 @@ def main() -> int:
                        "reasoning_effort": "none"})
     check("8 pi extras (store/include/stream_options) ignored", code == 200,
           "" if code == 200 else str(body)[:150])
+
+    # 9 — health endpoint (setup's probe marks the served model loaded from it)
+    try:
+        with urllib.request.urlopen(f"{base[:-3]}/health", timeout=5) as r:
+            health = json.loads(r.read().decode())
+        check("9 /health reports status + model",
+              health.get("status") == "ok" and health.get("model") == args.model,
+              f"status={health.get('status')} context_length={health.get('context_length')}")
+    except Exception as e:  # noqa: BLE001
+        check("9 /health reports status + model", False, str(e)[:120])
+
+    # 10 — structured-output refusals: pi's normal path (tools, no
+    # response_format) is safe; these two combos 400 by design
+    tools = [{"type": "function", "function": {
+        "name": "noop", "description": "test tool",
+        "parameters": {"type": "object", "properties": {}}}}]
+    code, body = post(f"{base}/chat/completions", {
+        "model": args.model, "messages": [{"role": "user", "content": "hi"}],
+        "tools": tools, "max_completion_tokens": 16, "reasoning_effort": "none",
+        "response_format": {"type": "json_object"}}, args.api_key)
+    code2, body2 = post(f"{base}/chat/completions", {
+        "model": args.model, "messages": [{"role": "user", "content": "hi"}],
+        "tools": tools, "tool_choice": "required",
+        "max_completion_tokens": 16, "reasoning_effort": "none"}, args.api_key)
+    check("10 response_format+tools and tool_choice 'required' rejected (400)",
+          code == 400 and code2 == 400,
+          f"rf+tools HTTP {code}, tool_choice HTTP {code2}")
 
     print()
     if failures:

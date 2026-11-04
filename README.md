@@ -90,15 +90,15 @@ lpb --help       # full usage
 
 | Component | Role |
 |---|---|
-| **Pi** | Coding agent CLI — mainstream pi from the npm registry (pinned in `lpb.stack.env`); Qwen thinking is handled by the lemonade plugin |
+| **Pi** | Coding agent CLI — mainstream pi from the npm registry (pinned in `lpb.stack.env`); Qwen thinking is handled by the lemonade plugin (lemonade) or pi's native `reasoning_effort` path (strixite) |
 | **VSCodium** | Web-based editor (`:web` image), connects over the OpenVSCode protocol |
 | **lemonade-pi-plugin** (forked) | Model provider for the local **Lemonade** server — Qwen thinking + vision support |
-| **Strixite** | Alternative local model backend — podman instance exposing an OpenAI-compatible API on `:8000`; registered as a pi-native custom provider (models.json), no plugin |
+| **Strixite** | Default local model backend — podman instance exposing an OpenAI-compatible API (container `:5300`, published on host `:8000`); registered as a pi-native custom provider (models.json), no plugin |
 | **lpb-memory** | Persistent memory + session search for the agent |
 | **pi-subagents** | Subagent model registry — upstream `tintinweb/pi-subagents` installed via npm (no hardcoded cloud models) |
 | **agent-browser** + Chrome | Browser automation tools for the agent |
 | **MCP servers** | Exa (web search), Context7 (library docs), agent-browser |
-| **Lemonade** or **Strixite** (host prerequisite) | Local model servers — Lemonade is AMD/Strix Halo-optimized and serves GGUF models; Strixite runs as a podman image instance on port 8000. Either can be selected at setup; model chosen by the user (no default) |
+| **Lemonade** or **Strixite** (host prerequisite) | Local model servers — Strixite (the default flavor) runs as a podman image instance published on host port 8000; Lemonade is AMD/Strix Halo-optimized and serves GGUF models. Either can be selected at setup (`LPB_MODEL_PROVIDER`); model chosen by the user (no default) |
 
 ## How It Works
 

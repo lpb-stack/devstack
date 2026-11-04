@@ -29,7 +29,8 @@ from testharness import (
 )
 
 LEMONADE_ENV_KEYS = ("LPB_LEMONADE_BASE_URL", "LEMONADE_BASE_URL",
-                     "LPB_LEMONADE_API_KEY", "LEMONADE_API_KEY")
+                     "LPB_LEMONADE_API_KEY", "LEMONADE_API_KEY",
+                     "LPB_MODEL_PROVIDER")
 
 
 class _TTYStdin(io.StringIO):
@@ -43,6 +44,12 @@ class _TTYStdin(io.StringIO):
 def _clean_lemonade_env():
     for k in LEMONADE_ENV_KEYS:
         os.environ.pop(k, None)
+
+
+def _use_lemonade_provider():
+    """These preflight tests describe the lemonade flavor — pin its selection
+    (the stack default is strixite since the v0.5 server line)."""
+    os.environ["LPB_MODEL_PROVIDER"] = "lemonade"
 
 
 def _env_joined(mod) -> str:
@@ -87,7 +94,7 @@ class FakeSetup:
 def _wizard_ok(base="http://192.168.0.20:13305", key="wizard-key",
                model="Model-A", warnings=None):
     return SimpleNamespace(ok=True, aborted=False, base_url=base,
-                           api_key=key, model=model,
+                           api_key=key, model=model, provider="lemonade",
                            warnings=warnings or [], error="", steps=[])
 
 
@@ -122,6 +129,7 @@ def _test_mode_common(mod_args, fs_status="missing"):
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     fs = FakeSetup(status=fs_status, wizard=_wizard_ok())
     mod.lpb_setup = fs
     try:
@@ -152,6 +160,7 @@ def test_wizard_web_mode():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     fs = FakeSetup(status="missing", wizard=_wizard_ok())
     mod.lpb_setup = fs
     mod._wait_editor_ready = lambda *a, **k: True   # no real socket probing
@@ -180,6 +189,7 @@ def test_healthy_provider_no_wizard():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     creds = {"type": "oauth",
              "refresh": json.dumps({"baseUrl": "http://stored:13305",
                                     "apiKey": "stored-key", "serverName": "stored"}),
@@ -205,9 +215,11 @@ def test_wizard_abort_no_container():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     fs = FakeSetup(status="missing",
                    wizard=SimpleNamespace(ok=False, aborted=True, base_url="",
-                                          api_key="", model="", warnings=[],
+                                          api_key="", model="",
+                                          provider="lemonade", warnings=[],
                                           error=""))
     mod.lpb_setup = fs
     try:
@@ -227,9 +239,10 @@ def test_wizard_start_anyway_warns_but_starts():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     fs = FakeSetup(status="missing",
                    wizard=SimpleNamespace(ok=False, aborted=False, base_url="",
-                                          api_key="", model="",
+                                          api_key="", model="", provider="lemonade",
                                           warnings=["server was NOT validated"],
                                           error=""))
     mod.lpb_setup = fs
@@ -251,6 +264,7 @@ def test_non_tty_no_wizard_env_passthrough():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     os.environ["LPB_LEMONADE_BASE_URL"] = "http://env:13305/v1"
     os.environ["LPB_LEMONADE_API_KEY"] = "env-key"
     fs = FakeSetup(status="missing", wizard=_wizard_ok())
@@ -271,6 +285,7 @@ def test_non_interactive_flag_skips_wizard_on_tty():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     fs = FakeSetup(status="missing", wizard=_wizard_ok())
     mod.lpb_setup = fs
     try:
@@ -289,6 +304,7 @@ def test_attach_running_container_no_wizard():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     fs = FakeSetup(status="missing", wizard=_wizard_ok())
     mod.lpb_setup = fs
     mod.cfg.container_name = "localpibox"   # harness mock's container name
@@ -312,6 +328,7 @@ def test_cmd_setup_success():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     fs = FakeSetup(wizard=_wizard_ok())
     mod.lpb_setup = fs
     try:
@@ -336,8 +353,10 @@ def test_cmd_setup_failure_exits_1():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     fs = FakeSetup(wizard=SimpleNamespace(ok=False, aborted=False, base_url="",
-                                          api_key="", model="", warnings=[],
+                                          api_key="", model="", provider="lemonade",
+                                          warnings=[],
                                           error="lemonade server unreachable "
                                                 "at http://h:13305: refused"))
     mod.lpb_setup = fs
@@ -359,6 +378,7 @@ def test_cmd_setup_missing_module():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     mod.lpb_setup = None
     try:
         mod.parse_cli(["setup"])
@@ -378,6 +398,7 @@ def test_cmd_doctor():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
 
     class DoctorFake:
         def __init__(self, rc):
@@ -425,6 +446,7 @@ def test_postlaunch_status_line():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     fs = FakeSetup(status="ok",
                    msg="lemonade/Model-A @ http://192.168.0.20:13305",
                    wizard=_wizard_ok())
@@ -444,6 +466,7 @@ def test_postlaunch_status_missing_warns():
     reset_mock()
     _clean_lemonade_env()
     mod = make_module()
+    _use_lemonade_provider()   # after make_module: it strips LPB_* env vars
     fs = FakeSetup(status="missing", msg="no model provider configured",
                    wizard=_wizard_ok())
     mod.lpb_setup = fs

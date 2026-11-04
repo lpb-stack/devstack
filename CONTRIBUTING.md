@@ -39,8 +39,8 @@ has its own scope:
 
 - **Never hardcode model names in agent defaults** — use `model: parent` so
   agents inherit the session model. See the config repo's `agents/` templates.
-- **Anthropic models are not used** in this stack; Qwen (via Lemonade) is the
-  default.
+- **Anthropic models are not used** in this stack; Qwen (via Strixite, or
+  Lemonade) is the default.
 - Forks carry candidate **upstream contributions**: ship a patch upstream when
   it's generally useful and not too opinionated for this stack.
 

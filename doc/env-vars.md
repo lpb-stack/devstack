@@ -28,7 +28,7 @@ If a value from `.env` doesn't seem to apply, check shell env first:
 | `LPB_BROWSER_DIR` | `~/.lpb-stack/agent-browser` | Host dir for browser profiles & sessions |
 | `LPB_CONTAINER_NAME` | `lpb-stack` | Container name (set in `lpb.stack.env`) |
 | `LPB_IMAGE_CLI` / `LPB_IMAGE_WEB` | `ghcr.io/lpb-stack/devstack:dev-{cli,web}` | Last-resort fallback images (forks repoint these) |
-| `LPB_MODEL_PROVIDER` | `lemonade` | Model provider flavor selected by the setup wizard: `lemonade` or `strixite` (both local OpenAI-compatible servers) |
+| `LPB_MODEL_PROVIDER` | `strixite` | Model provider flavor selected by the setup wizard: `strixite` or `lemonade` (both local OpenAI-compatible servers) |
 | `LPB_LEMONADE_BASE_URL` | `http://127.0.0.1:13305/v1` | Lemonade server URL — passed to the container; on a first boot (`--ssh`/`--web`) the launcher health-checks it and prompts for the real host if unreachable |
 | `LPB_LEMONADE_API_KEY` | `lemonade` | Lemonade API key — passed to the container for the first-boot setup wizard |
 | `LPB_STRIXITE_BASE_URL` | `http://127.0.0.1:8000/v1` | Strixite server URL (podman instance exposing the OpenAI-compatible API) |
@@ -46,7 +46,7 @@ wins.)
 | `LPB_ED_PORT` | `3000` | VSCodium port |
 | `LPB_EDITOR_HOST` | `0.0.0.0` | Editor listen host (`127.0.0.1` for local-only) |
 | `LPB_CONNECTION_TOKEN` | *(random per start)* | OpenVSCode token — set for a stable token |
-| `LPB_MODEL_PROVIDER` | `lemonade` | Setup-wizard provider flavor (`lemonade` \| `strixite`) |
+| `LPB_MODEL_PROVIDER` | `strixite` | Setup-wizard provider flavor (`strixite` \| `lemonade`) |
 | `LPB_LEMONADE_BASE_URL` | `http://127.0.0.1:13305/v1` | Local model server endpoint |
 | `LPB_STRIXITE_BASE_URL` | `http://127.0.0.1:8000/v1` | Strixite model server endpoint |
 | `LPB_AGENT_BROWSER_SESSION` | `$PI_WORKTREE_ID` | Browser session isolation id |

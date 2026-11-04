@@ -79,10 +79,13 @@ PROVIDERS: dict[str, ProviderSpec] = {
         "/api/v1/models", "/api/v1/health", "auth-json"),
     "strixite": ProviderSpec(
         "strixite", "Strixite", "http://127.0.0.1:8000", "strixite",
-        "/v1/models", None, "models-json"),
+        "/v1/models", "/health", "models-json"),
 }
 PROVIDER_ORDER = ("lemonade", "strixite")
-DEFAULT_PROVIDER = "lemonade"
+# strixite is the default flavor since the v0.5 server line (pi-native
+# provider, 512k context, multi-slot); lemonade stays fully supported —
+# select it with LPB_MODEL_PROVIDER=lemonade or at the wizard prompt.
+DEFAULT_PROVIDER = "strixite"
 
 # Capabilities pi cannot learn from an OpenAI-compat /v1/models reply, written
 # into models.json for "models-json" flavors so pi's picker, compaction and
@@ -95,7 +98,8 @@ MODEL_CAPABILITIES: dict[str, dict] = {
     "strixite": {
         "reasoning": True,
         "input": ["text", "image"],          # vision verified on the wire
-        "contextWindow": 262144,             # fallback; server context_length wins
+        "contextWindow": 524288,             # fallback (v0.5 default capacity);
+                                             # server context_length wins
         "maxTokens": 16384,
         # strixite speaks none|minimal|low|medium|high|xhigh and 400s on "max".
         # "off" must be an explicit spelling: no field at all = server default,
@@ -593,9 +597,14 @@ def probe_server(base_url: str, api_key: str = "", timeout: float = 8.0,
             health = _http_get_json(f"{base}{spec.health_path}",
                                     timeout=min(timeout, 5.0), api_key=api_key)
             if isinstance(health, dict):
+                # lemonade lists loaded models; strixite serves one model and
+                # names it in "model" alongside status/context_length/vision
                 for bm in health.get("all_models_loaded") or []:
                     if isinstance(bm, dict) and bm.get("model_name"):
                         loaded.add(bm["model_name"])
+                single = health.get("model")
+                if health.get("status") == "ok" and isinstance(single, str) and single:
+                    loaded.add(single)
         except Exception:
             pass  # health is optional — only marks models as "loaded"
     return ProbeResult(True, True, False, "", models, loaded)
@@ -827,7 +836,7 @@ def run_wizard(
     """Run the initial setup wizard. See module docstring for the steps.
 
     Provider flavor resolution: explicit *provider*, then LPB_MODEL_PROVIDER,
-    then the stored configuration (interactive only), then lemonade.
+    then the stored configuration (interactive only), then strixite.
 
     Interactive: prompts loop on failure; 'a' = continue anyway (flagged),
     'q' = abort (nothing written, result.aborted). Non-interactive: first

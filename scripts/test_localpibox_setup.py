@@ -104,6 +104,9 @@ def _env_setup(url="http://192.168.0.13:13305/v1", key="lemony"):
     # 'already configured' no-op) instead of the fixture it describes.
     for var in _PROVIDER_VARS:
         _ENV_SAVED.setdefault(var, os.environ.pop(var, None))
+    # the fixtures below describe the lemonade flavor — pin its selection,
+    # since the stack default (strixite) would otherwise change the flow
+    os.environ["LPB_MODEL_PROVIDER"] = "lemonade"
     os.environ["LEMONADE_BASE_URL"] = url
     os.environ["LEMONADE_API_KEY"] = key
 
@@ -119,7 +122,7 @@ _ENV_SAVED: dict[str, str | None] = {}
 
 
 def _env_teardown():
-    for var in ("LEMONADE_BASE_URL", "LEMONADE_API_KEY"):
+    for var in ("LEMONADE_BASE_URL", "LEMONADE_API_KEY", "LPB_MODEL_PROVIDER"):
         os.environ.pop(var, None)
     for var, value in _ENV_SAVED.items():
         if value is not None:
@@ -199,7 +202,7 @@ def test_probe_ok(tmpdir):
     orig = setup_mod._http_get_json
     setup_mod._http_get_json = _http_ok
     try:
-        r = setup_mod.probe_server("http://h:13305/v1", "k")
+        r = setup_mod.probe_server("http://h:13305/v1", "k", provider="lemonade")
     finally:
         setup_mod._http_get_json = orig
     assert r.ok and r.reachable and not r.auth_failed
@@ -212,16 +215,16 @@ def test_probe_auth_failed_distinct_from_unreachable(tmpdir):
     orig = setup_mod._http_get_json
     setup_mod._http_get_json = _http_auth_required
     try:
-        r = setup_mod.probe_server("http://h:13305", "")
+        r = setup_mod.probe_server("http://h:13305", "", provider="lemonade")
         assert not r.ok and r.reachable and r.auth_failed
         assert "API key" in r.error
-        r2 = setup_mod.probe_server("http://h:13305", "good-key")
+        r2 = setup_mod.probe_server("http://h:13305", "good-key", provider="lemonade")
         assert r2.ok
     finally:
         setup_mod._http_get_json = orig
     setup_mod._http_get_json = _http_down
     try:
-        r3 = setup_mod.probe_server("http://h:13305", "k")
+        r3 = setup_mod.probe_server("http://h:13305", "k", provider="lemonade")
     finally:
         setup_mod._http_get_json = orig
     assert not r3.reachable and not r3.auth_failed
@@ -794,20 +797,39 @@ def test_lpbconfig_memory_setup_delegates(tmpdir):
 
 # ─── Strixite flavor (OpenAI-compatible, models.json wiring) ─────────────────
 
+def test_default_provider_is_strixite(tmpdir):
+    """The stack defaults to strixite (pi-native, v0.5 server line); lemonade
+    stays fully specified when selected."""
+    assert setup_mod.DEFAULT_PROVIDER == "strixite"
+    spec = setup_mod.provider_spec("")
+    assert spec.name == "strixite" and spec.wiring == "models-json"
+    assert spec.health_path == "/health"          # v0.5 reports the served model
+    lem = setup_mod.provider_spec("lemonade")
+    assert lem.health_path == "/api/v1/health" and lem.wiring == "auth-json"
+    print("  PASS\n")
+
+
 STRIXITE_MODELS = {"data": [
     {"id": "qwen3.8-flash-next", "object": "model", "context_length": 262144},
     {"id": "qwen3.6-35b-a3b"},
 ]}
+# v0.5 health shape: single served model, named in "model"
+STRIXITE_HEALTH = {"status": "ok", "model": "qwen3.8-flash-next",
+                   "context_length": 262144, "vision": {"enabled": True},
+                   "slots": 2}
 
 
 def _http_ok_strixite(url, timeout=8.0, api_key=""):
     if url.endswith("/v1/models"):
         return STRIXITE_MODELS
+    if url.endswith("/health"):
+        return STRIXITE_HEALTH
     raise AssertionError(f"unexpected url {url}")
 
 
 def test_probe_strixite_endpoints(tmpdir):
-    """Strixite probes /v1/models (OpenAI shape) and has no health endpoint."""
+    """Strixite probes /v1/models (OpenAI shape); /health (single-model shape
+    since v0.5) marks the served model as loaded."""
     seen = []
 
     def spy(url, timeout=8.0, api_key=""):
@@ -824,7 +846,8 @@ def test_probe_strixite_endpoints(tmpdir):
     assert [m["id"] for m in r.models] == ["qwen3.8-flash-next", "qwen3.6-35b-a3b"]
     # context_length is what strixite reports; it becomes the entry's contextWindow
     assert r.models[0]["ctx"] == 262144 and r.models[1]["ctx"] is None
-    assert seen == ["http://h:8000/v1/models"]
+    assert seen == ["http://h:8000/v1/models", "http://h:8000/health"]
+    assert r.loaded == {"qwen3.8-flash-next"}
     print("  PASS\n")
 
 
