@@ -12,3 +12,7 @@ node_modules/
 #    branch; the tracked content lives in doc/, README.md, ...) ───────────
 /docs/
 /site/
+
+# local overrides for codeg+goose wiring (devstack repo codeg/ folder)
+codeg/codeg.env
+codeg/.catalog-cache/
